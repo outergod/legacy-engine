@@ -23,6 +23,8 @@
 
 (in-package :engine)
 
+(set-dispatch-macro-character #\# #\> #'cl-heredoc:read-heredoc)
+
 (defconstant +hunchentoot-port+ 8888)
 (defconstant +swank-port+ (1+ +hunchentoot-port+))
 
@@ -56,19 +58,34 @@
       (:style :type "text/css" :media "screen"
               (str (css (("body") (:overflow "none"))
                         (("#editor") (:margin 0 :position "absolute" :top 0 :bottom 0 :left 0 :right 0)))))
-      (:script :type "text/javascript" :src "ace/ace-uncompressed.js")
-      (:script :type "text/javascript" :src "ace/theme-twilight.js")
-      (:script :type "text/javascript"
-               (str (ps (chain window (add-event-listener "load"
-                                                            (lambda ()
-                                                              (let ((editor (chain ace (edit "editor"))))
-                                                                (chain editor (set-theme "ace/theme/twilight"))))
-                                                            false)))))
+      (:script :data-main "client/main" :src "client/require.js")
+      
       (:body (:pre :id "editor"))))))
 
-(push (create-folder-dispatcher-and-handler "/ace/"
-                                            (pathname-as-directory (in-project-path "support" "ace" "build" "src")))
-      *dispatch-table*)
+(defmacro define-memoized-js-handler (description lambda-list &body body)
+  `(let ((time (get-universal-time)))
+     (define-easy-handler ,description ,lambda-list
+      (handle-if-modified-since time)
+      (setf (content-type*) "text/javascript"
+            (header-out :last-modified) (rfc-1123-date time))
+      (with-html-output-to-string (*standard-output* nil)
+        (str (ps ,@body))))))
+
+(define-memoized-js-handler (client/main :uri "/client/main.js") ()
+  (chain require (ready (lambda ()
+                          (require (list "ace/ace-uncompressed" "ace/theme-twilight")
+                                   (lambda ()
+                                     (let ((editor (chain ace (edit "editor"))))
+                                       (chain editor (set-theme "ace/theme/twilight"))
+                                       (chain editor renderer (set-show-gutter false))
+                                       (chain editor renderer (set-show-print-margin false)))))))))
+
+(setq *dispatch-table* (list 'dispatch-easy-handlers
+                             (create-folder-dispatcher-and-handler "/client/ace/"
+                                                                   (pathname-as-directory (in-project-path "support" "ace" "build" "src")))
+                             (create-folder-dispatcher-and-handler "/client/"
+                                                                   (pathname-as-directory (in-project-path "client")))                             
+                             'default-dispatcher))
 
 (let ((swank:*use-dedicated-output-stream* nil)
       (swank:*communication-style*
