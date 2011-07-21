@@ -62,13 +62,16 @@
      (:body (:pre :id "editor")))))
 
 (defmacro define-memoized-js-handler (description lambda-list &body body)
-  `(let ((time (get-universal-time)))
+  `(let ((time (get-universal-time))
+         (result))
      (define-easy-handler ,description ,lambda-list
-      (handle-if-modified-since time)
-      (setf (content-type*) "text/javascript"
-            (header-out :last-modified) (rfc-1123-date time))
-      (with-html-output-to-string (*standard-output* nil)
-        (str ,@body)))))
+       (handle-if-modified-since time)
+       (setf (content-type*) "text/javascript"
+             (header-out :last-modified) (rfc-1123-date time))
+       (print (or result
+                  (setq result
+                        (with-html-output-to-string (string)
+                          (str ,@body))))))))
 
 (defmacro define-memoized-ps-handler (description lambda-list &body body)
   `(define-memoized-js-handler ,description ,lambda-list
