@@ -15,7 +15,7 @@
 ;;;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (let ((asdf:*asdf-verbose*))
-  (mapc #'require (list :hunchentoot :osicat :swank :cl-who :css-lite :parenscript)))
+  (mapc #'require (list :hunchentoot :osicat :swank :cl-who :css-lite :parenscript :cl-heredoc)))
 
 (defpackage engine
   (:use :cl :hunchentoot :osicat :osicat-sys :cl-who :parenscript)
