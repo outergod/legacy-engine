@@ -58,9 +58,8 @@
       (:style :type "text/css" :media "screen"
               (str (css (("body") (:overflow "none"))
                         (("#editor") (:margin 0 :position "absolute" :top 0 :bottom 0 :left 0 :right 0)))))
-      (:script :data-main "client/main" :src "client/require.js")
-      
-      (:body (:pre :id "editor"))))))
+      (:script :data-main "client/main" :src "client/require.js"))
+     (:body (:pre :id "editor")))))
 
 (defmacro define-memoized-js-handler (description lambda-list &body body)
   `(let ((time (get-universal-time)))
@@ -69,20 +68,52 @@
       (setf (content-type*) "text/javascript"
             (header-out :last-modified) (rfc-1123-date time))
       (with-html-output-to-string (*standard-output* nil)
-        (str (ps ,@body))))))
+        (str ,@body)))))
 
-(define-memoized-js-handler (client/main :uri "/client/main.js") ()
+(defmacro define-memoized-ps-handler (description lambda-list &body body)
+  `(define-memoized-js-handler ,description ,lambda-list
+     (ps ,@body)))
+
+
+(define-memoized-ps-handler (client/main :uri "/client/main.js") ()
   (chain require (ready (lambda ()
-                          (require (list "ace/ace-uncompressed" "ace/theme-twilight")
+                          (require (list "ace/ace-uncompressed" "ace/theme-twilight" "parenscript" "engine/commands/default_commands")
                                    (lambda ()
                                      (let ((editor (chain ace (edit "editor"))))
                                        (chain editor (set-theme "ace/theme/twilight"))
                                        (chain editor renderer (set-show-gutter false))
                                        (chain editor renderer (set-show-print-margin false)))))))))
 
+(define-memoized-ps-handler (client/engine/commands/default_commands :uri "/client/engine/commands/default_commands.js") ()
+  (define (lambda (require)
+            (let ((canon (require "pilot/canon"))
+                  (ps (require "parenscript")))
+              (flet ((bind-key (key)
+                       (create win key mac key sender "editor")))
+                (chain ps (map (chain canon add-command)
+                               (list (create name "move-beginning-of-line" bind-key (bind-key "Ctrl-a")
+                                             exec (lambda (env args request)
+                                                    (chain env editor (move-cursor-to-position 0))))
+                                     (create name "move-end-of-line" bind-key (bind-key "Ctrl-e")
+                                             exec (lambda (env args request)
+                                                    (chain env editor selection (move-cursor-line-end))))
+                                     (create name "back-to-indentation" bind-key (bind-key "Alt-m")
+                                             exec (lambda (env args request)
+                                                    (chain env editor selection (move-cursor-line-end))
+                                                    (chain env editor selection (move-cursor-line-start))))))))))))
+
+(define-memoized-ps-handler (client/parenscript :uri "/client/parenscript.js") ()
+  (define (lambda (require)
+            (lisp *ps-lisp-library*)
+            (lisp (cons 'create (mapcan #'(lambda (item)
+                                            (list item item))
+                                        (mapcar #'cadr (cdr *ps-lisp-library*))))))))
+
 (setq *dispatch-table* (list 'dispatch-easy-handlers
                              (create-folder-dispatcher-and-handler "/client/ace/"
                                                                    (pathname-as-directory (in-project-path "support" "ace" "build" "src")))
+                             (create-folder-dispatcher-and-handler "/client/canon/"
+                                                                   (pathname-as-directory (in-project-path "support" "ace" "support" "canon")))
                              (create-folder-dispatcher-and-handler "/client/"
                                                                    (pathname-as-directory (in-project-path "client")))                             
                              'default-dispatcher))
