@@ -97,7 +97,7 @@
           (chain ps (map (chain canon add-command)
                          (list (create name "move-beginning-of-line" bind-key (bind-key "Ctrl-a")
                                        exec (lambda (env args request)
-                                              (chain env editor (move-cursor-to-position 0))))
+                                              (chain env editor (move-cursor-to (chain env editor selection (get-selection-lead) row) 0))))
                                (create name "move-end-of-line" bind-key (bind-key "Ctrl-e")
                                        exec (lambda (env args request)
                                               (chain env editor selection (move-cursor-line-end))))
