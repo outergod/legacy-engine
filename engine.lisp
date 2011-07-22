@@ -82,7 +82,7 @@
   (chain require (ready (lambda ()
                           (require (list "ace/ace-uncompressed" "parenscript")
                                    (lambda ()
-                                     (require (list "ace/theme-twilight" "engine/commands/default_commands")
+                                     (require (list "engine/commands/default_commands" "ace/theme-twilight")
                                               (lambda ()
                                                 (let ((editor (chain ace (edit "editor"))))
                                                   (chain editor (set-theme "ace/theme/twilight"))
@@ -94,17 +94,36 @@
       (lambda (canon ps)
         (flet ((bind-key (key)
                  (create win key mac key sender "editor")))
-          (chain ps (map (chain canon add-command)
-                         (list (create name "move-beginning-of-line" bind-key (bind-key "Ctrl-a")
-                                       exec (lambda (env args request)
-                                              (chain env editor (move-cursor-to (chain env editor selection (get-selection-lead) row) 0))))
-                               (create name "move-end-of-line" bind-key (bind-key "Ctrl-e")
-                                       exec (lambda (env args request)
-                                              (chain env editor selection (move-cursor-line-end))))
-                               (create name "back-to-indentation" bind-key (bind-key "Alt-m")
-                                       exec (lambda (env args request)
-                                              (chain env editor selection (move-cursor-line-end))
-                                              (chain env editor selection (move-cursor-line-start)))))))))))
+          (macrolet ((add-command-args (name key &body body)
+                       `(create name ,name bind-key (bind-key ,key)
+                                exec (lambda (env args request)
+                                       ,@body))))
+            (chain ps (map (chain canon add-command)
+                           (list (add-command-args "forward-char" "Ctrl-f"
+                                                   (chain env editor (navigate-right 1)))
+                                 (add-command-args "forward-char" "Ctrl-b"
+                                                   (chain env editor (navigate-left 1)))
+                                 (add-command-args "forward-char" "Alt-f"
+                                                   (chain env editor selection (move-cursor-word-right)))
+                                 (add-command-args "forward-char" "Alt-b"
+                                                   (chain env editor selection (move-cursor-word-left)))
+                                 (add-command-args "move-beginning-of-line" "Ctrl-a"
+                                                   (chain env editor (move-cursor-to (chain env editor selection (get-selection-lead) row) 0)))
+                                 (add-command-args "move-end-of-line" "Ctrl-e"
+                                                   (chain env editor selection (move-cursor-line-end)))
+                                 (add-command-args "back-to-indentation" "Alt-m"
+                                                   (chain env editor selection (move-cursor-line-end))
+                                                   (chain env editor selection (move-cursor-line-start)))
+                                 (add-command-args "beginning-of-buffer" "Alt-Shift-," ; ouch, Alt-< doesn't work instead
+                                                   (chain env editor (navigate-file-start)))
+                                 (add-command-args "end-of-buffer" "Alt-Shift-." ; ditto for Alt->
+                                                   (chain env editor (navigate-file-end)))
+                                 (add-command-args "delete-char" "Ctrl-d"
+                                                   (chain env editor (remove-right)))
+                                 (add-command-args "kill-word" "Alt-d" ; TODO send to server
+                                                   (chain env editor (remove-word-right)))
+                                 (add-command-args "undo" "Alt-_" ; TODO send to server; FIXME; UndoManager?
+                                                   (chain env editor (undo)))))))))))
 
 (define-memoized-ps-handler (client/parenscript :uri "/client/parenscript.js") ()
   (define (lambda ()
@@ -116,8 +135,6 @@
 (setq *dispatch-table* (list 'dispatch-easy-handlers
                              (create-folder-dispatcher-and-handler "/client/ace/"
                                                                    (pathname-as-directory (in-project-path "support" "ace" "build" "src")))
-                             (create-folder-dispatcher-and-handler "/client/canon/"
-                                                                   (pathname-as-directory (in-project-path "support" "ace" "support" "canon")))
                              (create-folder-dispatcher-and-handler "/client/"
                                                                    (pathname-as-directory (in-project-path "client")))                             
                              'default-dispatcher))
