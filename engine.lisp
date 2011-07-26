@@ -15,15 +15,13 @@
 ;;;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (let ((asdf:*asdf-verbose*))
-  (mapc #'require (list :hunchentoot :osicat :swank :cl-who :css-lite :parenscript :cl-heredoc)))
+  (require :engine))
 
 (defpackage engine
-  (:use :cl :hunchentoot :osicat :osicat-sys :cl-who :parenscript)
+  (:use :cl :hunchentoot :osicat :osicat-sys :cl-who :parenscript :websocket)
   (:import-from :css-lite :css))
 
 (in-package :engine)
-
-(set-dispatch-macro-character #\# #\> #'cl-heredoc:read-heredoc)
 
 (defconstant +hunchentoot-port+ 8888)
 (defconstant +swank-port+ (1+ +hunchentoot-port+))
@@ -32,7 +30,7 @@
   (unless (boundp '*cwd*)
     (defparameter *cwd* (pathname-directory-pathname (compile-file-pathname "")))))
 
-(defparameter *acceptor* (make-instance 'acceptor :port +hunchentoot-port+))
+(defparameter *acceptor* (make-instance 'websocket-acceptor :port +hunchentoot-port+))
 (start *acceptor*)
 
 (setq *prologue* "<!DOCTYPE html>" ; html5, bitch!
@@ -47,6 +45,19 @@
                    (rec (merge-pathnames file acc) (cdr rest)))
                  acc)))
     (rec *cwd* paths)))
+
+(setq *message-log-pathname* (in-project-path "log" "message.log")
+      *access-log-pathname* (in-project-path "log" "access.log"))
+
+(setq *dispatch-table* (list 'dispatch-easy-handlers
+                             (create-folder-dispatcher-and-handler "/client/ace/"
+                                                                   (pathname-as-directory (in-project-path "support" "ace" "build" "src")))                             
+                             (create-folder-dispatcher-and-handler "/client/socket.io/"
+                                                                   (pathname-as-directory (in-project-path "support" "socket.io-client" "dist")))
+                             (create-folder-dispatcher-and-handler "/client/"
+                                                                   (pathname-as-directory (in-project-path "client")))                             
+                             'default-dispatcher))
+
 
 (define-easy-handler (index :uri "/") ()
   (with-html-output-to-string (*standard-output* nil :prologue t :indent t)
@@ -68,10 +79,10 @@
        (handle-if-modified-since time)
        (setf (content-type*) "text/javascript"
              (header-out :last-modified) (rfc-1123-date time))
-       (print (or result
-                  (setq result
-                        (with-html-output-to-string (string)
-                          (str ,@body))))))))
+       (or result
+           (setq result
+                 (with-html-output-to-string (string)
+                   (str ,@body)))))))
 
 (defmacro define-memoized-ps-handler (description lambda-list &body body)
   `(define-memoized-js-handler ,description ,lambda-list
@@ -79,15 +90,14 @@
 
 
 (define-memoized-ps-handler (client/main :uri "/client/main.js") ()
-  (chain require (ready (lambda ()
-                          (require (list "ace/ace-uncompressed" "parenscript")
-                                   (lambda ()
-                                     (require (list "engine/commands/default_commands" "ace/theme-twilight")
-                                              (lambda ()
-                                                (let ((editor (chain ace (edit "editor"))))
-                                                  (chain editor (set-theme "ace/theme/twilight"))
-                                                  (chain editor renderer (set-show-gutter false))
-                                                  (chain editor renderer (set-show-print-margin false)))))))))))
+  (require (list "ace/ace-uncompressed" "parenscript" "socket.io/socket.io")
+           (lambda ()
+             (require (list "engine/commands/default_commands" "ace/theme-twilight")
+                      (lambda ()
+                        (let ((editor (chain ace (edit "editor"))))
+                          (chain editor (set-theme "ace/theme/twilight"))
+                          (chain editor renderer (set-show-gutter false))
+                          (chain editor renderer (set-show-print-margin false))))))))
 
 (define-memoized-ps-handler (client/engine/commands/default_commands :uri "/client/engine/commands/default_commands.js") ()
   (define (list "pilot/canon" "parenscript")
@@ -131,13 +141,6 @@
             (lisp (cons 'create (mapcan #'(lambda (item)
                                             (list item item))
                                         (mapcar #'cadr (cdr *ps-lisp-library*))))))))
-
-(setq *dispatch-table* (list 'dispatch-easy-handlers
-                             (create-folder-dispatcher-and-handler "/client/ace/"
-                                                                   (pathname-as-directory (in-project-path "support" "ace" "build" "src")))
-                             (create-folder-dispatcher-and-handler "/client/"
-                                                                   (pathname-as-directory (in-project-path "client")))                             
-                             'default-dispatcher))
 
 (let ((swank:*use-dedicated-output-stream* nil)
       (swank:*communication-style*
