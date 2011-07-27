@@ -16,17 +16,13 @@
 
 (in-package :websocket)
 
-(defclass websocket-request (request)
-  ((content-stream :initarg :content-stream
-                   :accessor content-stream
-                   :documentation "A stream from which the request
-body can be read if there is one.")))
+(defclass websocket-request (request) ())
 
-(defclass websocket-reply (reply)
-  ((external-format :initform (make-external-format :utf8 :eol-style :lf)
-                    :reader reply-external-format
-                    :documentation "The external format of the reply -
-used for character output.")))
+(defclass websocket-reply (reply) ())
+
+(defmethod initialize-instance :after ((reply websocket-reply) &rest initargs &key &allow-other-keys)
+  (declare (ignore initargs))
+  (setf (reply-external-format reply) (make-external-format :utf8 :eol-style :lf)))
 
 (defclass websocket-acceptor (acceptor) ()
   (:default-initargs :request-class 'websocket-request :reply-class 'websocket-reply))
@@ -35,11 +31,17 @@ used for character output.")))
   ((key :initarg :key :reader websocket-illegal-key-of
         :initform (required-argument :key))))
 
+(define-condition websocket-illegal-frame-type (condition)
+  ((type :initarg :type :reader websocket-illegal-frame-type-of
+         :initform (required-argument :type))))
+
+
+(defconstant +websocket-terminator+ '(#x00 #xff))
 
 (defun integer-octets-32be (number)
   (let ((result (make-array 4 :element-type '(unsigned-byte 8))))
     (dotimes (index 4 result)
-      (let ((position #+little-endian (abs (- (* 8 index) 24)) #-little-endian (* 8 index)))
+      (let ((position #+little-endian (- 24 (* 8 index)) #-little-endian (* 8 index)))
         (setf (aref result index)
               (ldb (byte 8 position) number))))))
 
@@ -90,10 +92,34 @@ used for character output.")))
               (header-out :server reply) nil
               (content-type* reply) "application/octet-stream"))
     (websocket-illegal-key (condition)
-      (log-message :error "Illegal key ~a encountered" (websocket-illegal-key-of condition))
-      (setf (return-code reply) +http-internal-server-error+))))
+      (hunchentoot-error "Illegal key ~a encountered" (websocket-illegal-key-of condition)))))
 
-(defmethod process-request :around ((websocket-request request))
+(defun websocket-send-term (stream)
+  (write-sequence +websocket-terminator+ stream))
+
+(defun websocket-send-message (stream message)
+  (when (> (length message) 0) ; empty message would send terminator
+    (write-byte #x00 stream)
+    (write-utf-8-bytes message stream)
+    (write-byte #xff stream)))
+
+(defun websocket-process-message (message)
+  (format *debug-io* "received message ~s~%" message)) ; TODO
+
+(defun websocket-process-connection (stream &optional (standard :draft-hixie-76))
+  (ecase standard
+    (:draft-hixie-76
+     (do ((type (read-byte stream) (read-byte stream)))
+         ((= #xff type)) ; regular termination
+       (if (= #x00 type)
+           (do ((reader (make-in-memory-output-stream))
+                (data (read-byte stream) (read-byte stream)))
+               ((= #xff data)
+                (websocket-process-message (utf-8-bytes-to-string (get-output-stream-sequence reader))))
+             (write-byte data reader))
+           (error 'websocket-illegal-frame-type :type type)))))) ; irregular termination
+
+(defmethod process-request :around ((request websocket-request))
   "I *do* know what I'm doing, Mister!"
   (let ((*approved-return-codes* (cons +http-switching-protocols+
                                        *approved-return-codes*)))
@@ -101,9 +127,7 @@ used for character output.")))
       (prog1 stream
         (when (= +http-switching-protocols+ (return-code*))
           (force-output stream)
-; TODO websocket connection
-          (loop for char = (read-byte stream nil) while char do (format *debug-io* "~c" (code-char char)))
-          (format *debug-io* "hello?~%"))))))
+          (websocket-process-connection stream))))))
 
 (defmethod handle-request ((*acceptor* websocket-acceptor) (*request* request))
   (if (and (string= "upgrade" (string-downcase (header-in* :connection)))
