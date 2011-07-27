@@ -106,18 +106,29 @@
 (defun websocket-process-message (message)
   (format *debug-io* "received message ~s~%" message)) ; TODO
 
-(defun websocket-process-connection (stream &optional (standard :draft-hixie-76))
-  (ecase standard
+(defun skip-bytes (stream number)
+  (dotimes (num number)
+    (read-byte stream)))
+
+(defun websocket-process-connection (stream &optional (version :draft-hixie-76))
+  (ecase version
     (:draft-hixie-76
-     (do ((type (read-byte stream) (read-byte stream)))
-         ((= #xff type)) ; regular termination
-       (if (= #x00 type)
-           (do ((reader (make-in-memory-output-stream))
-                (data (read-byte stream) (read-byte stream)))
-               ((= #xff data)
-                (websocket-process-message (utf-8-bytes-to-string (get-output-stream-sequence reader))))
-             (write-byte data reader))
-           (error 'websocket-illegal-frame-type :type type)))))) ; irregular termination
+     (loop for type = (read-byte stream) do 
+          (cond ((= #x00 type)
+                 (do ((reader (make-in-memory-output-stream))
+                      (data (read-byte stream) (read-byte stream)))
+                     ((= #xff data)
+                      (websocket-process-message (utf-8-bytes-to-string (get-output-stream-sequence reader))))
+                   (write-byte data reader)))
+                ((= #xff type)
+                 (let ((data (read-byte stream)))
+                   (if (= #x00 data)
+                       (return) ; regular termination
+                       (do* ((data data (read-byte stream))
+                             (length (logand #x7f data) (+ (* 128 length) (logand #x7f data))))
+                            ((= #x80 (logand #x80 data))
+                             (skip-bytes stream length))))))
+                (t (error 'websocket-illegal-frame-type :type type))))))) ; irregular termination
 
 (defmethod process-request :around ((request websocket-request))
   "I *do* know what I'm doing, Mister!"
@@ -127,7 +138,10 @@
       (prog1 stream
         (when (= +http-switching-protocols+ (return-code*))
           (force-output stream)
-          (websocket-process-connection stream))))))
+          (handler-case
+              (websocket-process-connection stream)
+            (end-of-file ()
+              (log-message :debug "WebSocket connection terminated"))))))))
 
 (defmethod handle-request ((*acceptor* websocket-acceptor) (*request* request))
   (if (and (string= "upgrade" (string-downcase (header-in* :connection)))
