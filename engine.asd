@@ -27,7 +27,7 @@
                 :license "AGPLv3+"
                 :depends-on (:hunchentoot :osicat :swank :cl-who :css-lite :parenscript :cl-ppcre
                              ; websocket
-                             :alexandria :ironclad :flexi-streams :chunga
+                             :alexandria :ironclad :flexi-streams :chunga :trivial-utf-8
                              ; socket.io
                              :uuid)
                 :components

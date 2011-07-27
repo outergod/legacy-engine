@@ -15,12 +15,12 @@
 ;;;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (in-package :hunchentoot)
-(export (list 'content-stream 'reply-external-format 'external-format '*close-hunchentoot-stream*))
+(export (list 'content-stream 'set-timeouts 'acceptor-listen-socket))
 
 (in-package :engine-system)
 
 (defpackage :websocket
-  (:use :cl :hunchentoot :cl-ppcre :alexandria :flexi-streams)
+  (:use :cl :hunchentoot :cl-ppcre :alexandria :flexi-streams :trivial-utf-8)
   (:import-from :ironclad :digest-stream)
   (:export :websocket-acceptor))
 
