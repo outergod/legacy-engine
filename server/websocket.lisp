@@ -40,7 +40,9 @@
          :initform (required-argument :type))))
 
 (defconstant +websocket-terminator+ '(#x00 #xff))
-(defconstant +websocket-magic-key+ "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+(defconstant +websocket-magic-key+ "258EAFA5-E914-47DA-95CA-C5AB0DC85B11") ; this is a fixed uuid v4 value by specification
+
+(defvar *websocket-stream*)
 
 (defun integer-octets-32be (number)
   (let ((result (make-array 4 :element-type '(unsigned-byte 8))))
@@ -102,23 +104,26 @@
               (header-out :upgrade reply) "WebSocket"
               (header-out :connection reply) "Upgrade"
               (header-out :server reply) nil
-              (content-type* reply) "application/octet-stream"))
+              (content-type* reply) "application/octet-stream")) ; fscking hunchentoot insists on content-type, have to change upstream
     (websocket-illegal-key (condition)
       (hunchentoot-error "Illegal key ~a encountered" (websocket-illegal-key-of condition)))
     (websocket-unsupported-version ()
       (hunchentoot-error "WebSocket handshake failed because of unsupported protocol version"))))
 
 (defun websocket-send-term (stream)
-  (write-sequence +websocket-terminator+ stream))
+  (write-sequence +websocket-terminator+ stream)
+  (force-output stream))
 
-(defun websocket-send-message (stream message)
+(defun websocket-send-message (message &optional (stream *websocket-stream*))
   (when (> (length message) 0) ; empty message would send terminator
     (write-byte #x00 stream)
     (write-utf-8-bytes message stream)
-    (write-byte #xff stream)))
+    (write-byte #xff stream)
+    (force-output stream)))
 
 (defun websocket-process-message (message)
-  (format *debug-io* "received message ~s~%" message)) ; TODO
+  (format *debug-io* "received message ~s~%" message)
+  (websocket-send-message (format nil "echo ~a" message))) ; TODO
 
 (defun skip-bytes (stream number)
   (dotimes (num number)
@@ -126,13 +131,14 @@
 
 (defun websocket-process-connection (stream &optional (version :draft-hixie-76))
   (ecase version
-    (:draft-hixie-76
+    ((:draft-hixie-76 :draft-hybi-00)
      (loop for type = (read-byte stream) do 
           (cond ((= #x00 type)
                  (do ((reader (make-in-memory-output-stream))
                       (data (read-byte stream) (read-byte stream)))
                      ((= #xff data)
-                      (websocket-process-message (utf-8-bytes-to-string (get-output-stream-sequence reader))))
+                      (let ((*websocket-stream* stream))
+                        (websocket-process-message (utf-8-bytes-to-string (get-output-stream-sequence reader)))))
                    (write-byte data reader)))
                 ((= #xff type)
                  (let ((data (read-byte stream)))
