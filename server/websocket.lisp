@@ -27,6 +27,10 @@
 (defclass websocket-acceptor (acceptor) ()
   (:default-initargs :request-class 'websocket-request :reply-class 'websocket-reply))
 
+(define-condition websocket-unsupported-version (condition)
+  ((version :initarg :version :reader websocket-unsupported-version-of
+            :initform (required-argument :version))))
+
 (define-condition websocket-illegal-key (condition)
   ((key :initarg :key :reader websocket-illegal-key-of
         :initform (required-argument :key))))
@@ -35,8 +39,8 @@
   ((type :initarg :type :reader websocket-illegal-frame-type-of
          :initform (required-argument :type))))
 
-
 (defconstant +websocket-terminator+ '(#x00 #xff))
+(defconstant +websocket-magic-key+ "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
 
 (defun integer-octets-32be (number)
   (let ((result (make-array 4 :element-type '(unsigned-byte 8))))
@@ -68,31 +72,41 @@
 (defun websocket-uri (request host &optional ssl)
   (format nil "~:[ws~;wss~]://~a~a" ssl host (script-name request)))
 
+(defun websocket-handle-handshake-legacy (request reply)
+  (prog1
+      (let* ((stream (make-in-memory-output-stream)))
+        (mapc #'(lambda (key)
+                  (write-sequence key stream))
+              (list (websocket-keyhash (header-in :sec-websocket-key1 request))
+                    (websocket-keyhash (header-in :sec-websocket-key2 request))
+                    (read-key3 request)))
+        (digest-key (get-output-stream-sequence stream)))
+    (setf (header-out :sec-websocket-origin reply) (header-in :origin request)
+          (header-out :sec-websocket-location reply) (or (websocket-uri request (header-in :host request)
+                                                                        (ssl-p (request-acceptor request))))
+          (header-out :sec-websocket-protocol reply) (header-in :sec-websocket-protocol request))))
+
 ; Sec-WebSocket-Draft: X ?
 (defun websocket-handle-handshake (request reply)
   (handler-case
       (prog1
-          (cond ((header-in :sec-websocket-key request) nil)  ; >= draft-ietf-hybi-thewebsocketprotocol-04 FIXME
-                ((and (header-in :sec-websocket-key1 request) ; <  draft-ietf-hybi-thewebsocketprotocol-04
+          (cond ((header-in :sec-websocket-version request) ; >= draft-hybi-04 FIXME
+                 (error 'websocket-unsupported-version (header-in :sec-websocket-version request)))
+                ((header-in :sec-websocket-draft request) ; (and (>= draft-hybi-02) (<= draft-hybi-03)) FIXME
+                 (error 'websocket-unsupported-version (header-in :sec-websocket-draft request)))
+                ((and (header-in :sec-websocket-key1 request) ; < draft-hybi-02
                       (header-in :sec-websocket-key2 request))
-                 (let* ((stream (make-in-memory-output-stream)))
-                   (mapc #'(lambda (key)
-                             (write-sequence key stream))
-                         (list (websocket-keyhash (header-in :sec-websocket-key1 request))
-                               (websocket-keyhash (header-in :sec-websocket-key2 request))
-                               (read-key3 request)))
-                   (digest-key (get-output-stream-sequence stream)))))
+                 (websocket-handle-handshake-legacy request reply))
+                (t (error 'websocket-unsupported-version :unknown)))
         (setf (return-code* reply) +http-switching-protocols+
               (header-out :upgrade reply) "WebSocket"
               (header-out :connection reply) "Upgrade"
-              (header-out :sec-websocket-origin reply) (header-in :origin request)
-              (header-out :sec-websocket-location reply) (or (websocket-uri request (header-in :host request)
-                                                                            (ssl-p (request-acceptor request))))
-              (header-out :sec-websocket-protocol reply) (header-in :sec-websocket-protocol request)
               (header-out :server reply) nil
               (content-type* reply) "application/octet-stream"))
     (websocket-illegal-key (condition)
-      (hunchentoot-error "Illegal key ~a encountered" (websocket-illegal-key-of condition)))))
+      (hunchentoot-error "Illegal key ~a encountered" (websocket-illegal-key-of condition)))
+    (websocket-unsupported-version ()
+      (hunchentoot-error "WebSocket handshake failed because of unsupported protocol version"))))
 
 (defun websocket-send-term (stream)
   (write-sequence +websocket-terminator+ stream))
@@ -141,7 +155,10 @@
           (handler-case
               (websocket-process-connection stream)
             (end-of-file ()
-              (log-message :debug "WebSocket connection terminated"))))))))
+              (log-message :debug "WebSocket connection terminated"))
+            (websocket-illegal-frame-type (condition)
+              (log-message :error "WebSocket illegal frame type 0x~x encountered, terminating"
+                           (websocket-illegal-frame-type-of condition)))))))))
 
 (defmethod handle-request ((*acceptor* websocket-acceptor) (*request* request))
   (if (and (string= "upgrade" (string-downcase (header-in* :connection)))
