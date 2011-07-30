@@ -55,7 +55,7 @@
                              (create-folder-dispatcher-and-handler "/client/socket.io/"
                                                                    (pathname-as-directory (in-project-path "support" "socket.io-client" "dist")))
                              (create-folder-dispatcher-and-handler "/client/"
-                                                                   (pathname-as-directory (in-project-path "client")))                             
+                                                                   (pathname-as-directory (in-project-path "client")))
                              'default-dispatcher))
 
 
@@ -141,6 +141,8 @@
             (lisp (cons 'create (mapcan #'(lambda (item)
                                             (list item item))
                                         (mapcar #'cadr (cdr *ps-lisp-library*))))))))
+
+(socket.io:define-socket.io-handler)
 
 (let ((swank:*use-dedicated-output-stream* nil)
       (swank:*communication-style*

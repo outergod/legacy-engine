@@ -22,7 +22,9 @@
 (defpackage :websocket
   (:use :cl :hunchentoot :cl-ppcre :alexandria :flexi-streams :trivial-utf-8)
   (:import-from :ironclad :digest-stream)
-  (:export :websocket-acceptor))
+  (:export :websocket-acceptor :websocket-handle-handshake :websocket-send-message :websocket-send-term
+           :*websocket-handlers* :default-websocket-handler))
 
 (defpackage :socket.io
-  (:use :cl :hunchentoot :cl-ppcre :uuid))
+  (:use :cl :hunchentoot :cl-ppcre :uuid :websocket)
+  (:export :define-socket.io-handler))

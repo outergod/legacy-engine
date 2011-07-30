@@ -16,7 +16,9 @@
 
 (in-package :websocket)
 
-(defclass websocket-request (request) ())
+(defclass websocket-request (request)
+  ((handler :accessor websocket-request-handler
+            :initform nil)))
 
 (defclass websocket-reply (reply) ())
 
@@ -24,7 +26,10 @@
   (declare (ignore initargs))
   (setf (reply-external-format reply) (make-external-format :utf8 :eol-style :lf)))
 
-(defclass websocket-acceptor (acceptor) ()
+(defclass websocket-acceptor (acceptor)
+  ((websocket-timeout :initarg :websocket-timeout
+                      :accessor websocket-timeout
+                      :initform 60))
   (:default-initargs :request-class 'websocket-request :reply-class 'websocket-reply))
 
 (define-condition websocket-unsupported-version (condition)
@@ -43,6 +48,9 @@
 (defconstant +websocket-magic-key+ "258EAFA5-E914-47DA-95CA-C5AB0DC85B11") ; this is a fixed uuid v4 value by specification
 
 (defvar *websocket-stream*)
+(defvar *websocket-socket*)
+
+(defparameter *websocket-handlers* nil)
 
 (defun integer-octets-32be (number)
   (let ((result (make-array 4 :element-type '(unsigned-byte 8))))
@@ -74,7 +82,7 @@
 (defun websocket-uri (request host &optional ssl)
   (format nil "~:[ws~;wss~]://~a~a" ssl host (script-name request)))
 
-(defun websocket-handle-handshake-legacy (request reply)
+(defun handle-handshake-legacy (request reply)
   (prog1
       (let* ((stream (make-in-memory-output-stream)))
         (mapc #'(lambda (key)
@@ -88,7 +96,6 @@
                                                                         (ssl-p (request-acceptor request))))
           (header-out :sec-websocket-protocol reply) (header-in :sec-websocket-protocol request))))
 
-; Sec-WebSocket-Draft: X ?
 (defun websocket-handle-handshake (request reply)
   (handler-case
       (prog1
@@ -98,13 +105,12 @@
                  (error 'websocket-unsupported-version (header-in :sec-websocket-draft request)))
                 ((and (header-in :sec-websocket-key1 request) ; < draft-hybi-02
                       (header-in :sec-websocket-key2 request))
-                 (websocket-handle-handshake-legacy request reply))
+                 (handle-handshake-legacy request reply))
                 (t (error 'websocket-unsupported-version :unknown)))
         (setf (return-code* reply) +http-switching-protocols+
               (header-out :upgrade reply) "WebSocket"
               (header-out :connection reply) "Upgrade"
-              (header-out :server reply) nil
-              (content-type* reply) "application/octet-stream")) ; fscking hunchentoot insists on content-type, have to change upstream
+              (content-type* reply) "application/octet-stream"))
     (websocket-illegal-key (condition)
       (hunchentoot-error "Illegal key ~a encountered" (websocket-illegal-key-of condition)))
     (websocket-unsupported-version ()
@@ -121,15 +127,11 @@
     (write-byte #xff stream)
     (force-output stream)))
 
-(defun websocket-process-message (message)
-  (format *debug-io* "received message ~s~%" message)
-  (websocket-send-message (format nil "echo ~a" message))) ; TODO
-
 (defun skip-bytes (stream number)
   (dotimes (num number)
     (read-byte stream)))
 
-(defun websocket-process-connection (stream &optional (version :draft-hixie-76))
+(defun websocket-process-connection (stream message-handler &optional (version :draft-hixie-76))
   (ecase version
     ((:draft-hixie-76 :draft-hybi-00)
      (loop for type = (read-byte stream) do 
@@ -138,7 +140,7 @@
                       (data (read-byte stream) (read-byte stream)))
                      ((= #xff data)
                       (let ((*websocket-stream* stream))
-                        (websocket-process-message (utf-8-bytes-to-string (get-output-stream-sequence reader)))))
+                        (funcall message-handler (utf-8-bytes-to-string (get-output-stream-sequence reader)))))
                    (write-byte data reader)))
                 ((= #xff type)
                  (let ((data (read-byte stream)))
@@ -150,6 +152,11 @@
                              (skip-bytes stream length))))))
                 (t (error 'websocket-illegal-frame-type :type type))))))) ; irregular termination
 
+(defmethod process-connection :around ((*acceptor* websocket-acceptor) (socket t))
+  (let ((*websocket-socket* socket)
+        (hunchentoot-asd:*hunchentoot-version* (format nil "~a cl-websocket 0" hunchentoot-asd:*hunchentoot-version*)))
+    (call-next-method)))
+
 (defmethod process-request :around ((request websocket-request))
   "I *do* know what I'm doing, Mister!"
   (let ((*approved-return-codes* (cons +http-switching-protocols+
@@ -158,16 +165,27 @@
       (prog1 stream
         (when (= +http-switching-protocols+ (return-code*))
           (force-output stream)
+          (let ((timeout (websocket-timeout (request-acceptor request))))
+            (set-timeouts *websocket-socket* timeout timeout))
           (handler-case
-              (websocket-process-connection stream)
+              (websocket-process-connection stream
+                                            (funcall (websocket-request-handler request) stream)) ; custom handshake
             (end-of-file ()
               (log-message :debug "WebSocket connection terminated"))
             (websocket-illegal-frame-type (condition)
               (log-message :error "WebSocket illegal frame type 0x~x encountered, terminating"
                            (websocket-illegal-frame-type-of condition)))))))))
 
-(defmethod handle-request ((*acceptor* websocket-acceptor) (*request* request))
+(defun dispatch-websocket-handlers (request)
+  (some #'(lambda (handler)
+            (funcall handler request))
+        *websocket-handlers*))
+
+(defmethod handle-request ((*acceptor* websocket-acceptor) (*request* websocket-request))
   (if (and (string= "upgrade" (string-downcase (header-in* :connection)))
            (string= "websocket" (string-downcase (header-in* :upgrade))))
-      (websocket-handle-handshake *request* *reply*)
+      (if-let ((handler (dispatch-websocket-handlers *request*)))
+        (prog1 (websocket-handle-handshake *request* *reply*)
+          (setf (websocket-request-handler *request*) handler))
+        (hunchentoot-error "WebSocket request rejected (no suitable handler found)"))
       (call-next-method)))
