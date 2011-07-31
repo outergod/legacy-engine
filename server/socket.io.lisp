@@ -64,6 +64,14 @@
                (list 4 message-id (encode-json message))
                (list 3 message-id message)))))
 
+(defun terminate (session)
+  (let ((stream (getf-session session :stream)))
+    (delete-session (car session))
+    (when (and (streamp stream) (open-stream-p stream))
+      (send-disconnect)
+      (websocket-send-term)
+      (close stream))))
+
 (defun heartbeat ()
   (log-message :debug "Bubump")
   (mapc #'(lambda (session)
@@ -79,11 +87,7 @@
                     (progn
                       (log-message :debug "Heartbeat timeout for ~a: ~:[not ~;~]open / ~d > ~d"
                                    session-id open send-timestamp (+ heartbeat-timeout receive-timestamp))
-                      (when open
-                        (send-disconnect)
-                        (websocket-send-term)
-                        (close stream))
-                      (delete-session session-id))
+                      (terminate session))
                     (progn
                       (log-message :debug "Sending heartbeat to ~a" session-id)
                       (send-heartbeat)
@@ -112,6 +116,18 @@
         (round heartbeat)
         1)))
 
+(defun translate-message-type (type)
+  (ecase (parse-integer type :junk-allowed nil)
+    (0 :disconnect)
+    (1 :connect)
+    (2 :heartbeat)
+    (3 :message)
+    (4 :json-message)
+    (5 :event)
+    (6 :ack)
+    (7 :error)
+    (8 :noop)))
+
 (defun handle-message (message message-handler)
   (declare (ignore message-handler)) ; TODO
   (log-message :debug "Received socket.io message ~s~%" message)
@@ -122,12 +138,13 @@
         (destructuring-bind (type id handle-id endpoint data)
             (coerce matches 'list)
           (declare (ignore id handle-id endpoint data)) ; TODO
-          (ecase (parse-integer type :junk-allowed nil)
-            (0 ; disconnect TODO
-             t)
-            (1 ; connect TODO
+          (ecase (translate-message-type type)
+            (:disconnect
+             (log-message :debug "Client signalled termination"))
+             (delete-session (car *session*)))
+            (:connect ; connect TODO
              (log-message :info "Client tried to connect to additional endpoint"))
-            (2 ; heartbeat
+            (:heartbeat
              (log-message :debug "Client sent heartbeat")
              (setf (getf-session *session* :receive-timestamp) (get-universal-time)))))
         (log-message :error "Message is malfomed"))))
@@ -138,15 +155,15 @@
          (heartbeat (timeout-heartbeat timeout))
          (session (list session-id :heartbeat-timeout heartbeat :close-timeout timeout :message-id 0)))
     (push session *sessions*)
-    (push #'(lambda (request)
+    (push #'(lambda (request) ; dispatcher
               (and (scan scanner (script-name request))
                    (uuid-equal-p (uuid:make-uuid-from-string (cadr (path-info* request)))
                                  session-id)
-                   #'(lambda (stream mutex)
+                   #'(lambda (stream mutex) ; handshake handler
                        (send-connect)
                        (setf (getf (cdr session) :stream) stream
                              (getf (cdr session) :mutex) mutex)
-                       #'(lambda (message)
+                       #'(lambda (message) ; message handler
                            (let ((*session* session))
                              (handle-message message message-handler))))))
           *websocket-handlers*)

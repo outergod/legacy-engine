@@ -164,7 +164,10 @@
   (handler-case
       (call-next-method)
     (error (condition)
-      (log-message :error "WebSocket connection terminated unexpectedly: ~a" condition))))
+      (log-message :error "WebSocket connection terminated unexpectedly: ~a" condition)
+      (log-message :debug "~@[~%~a~]"
+                   (with-output-to-string (string)
+                     (trivial-backtrace:print-backtrace-to-stream string))))))
 
 (defmethod process-request :around ((request websocket-request))
   "I *do* know what I'm doing, Mister!"

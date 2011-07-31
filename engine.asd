@@ -28,6 +28,7 @@
                 :depends-on (:hunchentoot :osicat :swank :cl-who :css-lite :parenscript :cl-ppcre
                              ; websocket
                              :alexandria :ironclad :flexi-streams :chunga :trivial-utf-8 :bordeaux-threads
+                             :trivial-backtrace
                              ; socket.io
                              :uuid :json :cl-heredoc)
                 :components
