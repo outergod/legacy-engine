@@ -16,6 +16,15 @@
 
 (in-package :websocket)
 
+(defconstant +websocket-terminator+ '(#x00 #xff))
+(defconstant +websocket-magic-key+ "258EAFA5-E914-47DA-95CA-C5AB0DC85B11") ; this is a fixed uuid v4 value by specification
+
+(defvar *websocket-stream*)
+(defvar *websocket-stream-mutex*)
+(defvar *websocket-socket*)
+
+(defparameter *websocket-handlers* nil)
+
 (defclass websocket-request (request)
   ((handler :accessor websocket-request-handler
             :initform nil)))
@@ -43,15 +52,6 @@
 (define-condition websocket-illegal-frame-type (condition)
   ((type :initarg :type :reader websocket-illegal-frame-type-of
          :initform (required-argument :type))))
-
-(defconstant +websocket-terminator+ '(#x00 #xff))
-(defconstant +websocket-magic-key+ "258EAFA5-E914-47DA-95CA-C5AB0DC85B11") ; this is a fixed uuid v4 value by specification
-
-(defvar *websocket-stream*)
-(defvar *websocket-stream-mutex*)
-(defvar *websocket-socket*)
-
-(defparameter *websocket-handlers* nil)
 
 (defun integer-octets-32be (number)
   (let ((result (make-array 4 :element-type '(unsigned-byte 8))))
