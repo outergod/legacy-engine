@@ -28,10 +28,6 @@
          (uuid:uuid-to-byte-array uuid-1)
          (uuid:uuid-to-byte-array uuid-2)))
 
-(defun delete-session (session)
-  (log-message :debug "Going to delete session ~a" (car session))
-  (setq *sessions* (delete session *sessions* :test #'eq)))
-
 (defun uuid-session (uuid)
   (assoc uuid *sessions* :test #'uuid-equal-p))
 
@@ -47,6 +43,11 @@
 
 (defun (setf getf-uuid-session) (val uuid var)
   (setf (getf-session (uuid-session uuid) var) val))
+
+(defun delete-session (session)
+  (log-message :debug "Going to delete session ~a" (car session))
+  (setq *sessions* (delete session *sessions* :test #'eq))
+  (setq *websocket-handlers* (delete (getf-session session :dispatcher) *websocket-handlers* :test #'eq)))
 
 (defun send-disconnect ()
   (websocket-send-message "0::"))
@@ -149,25 +150,32 @@
              (setf (getf-session *session* :receive-timestamp) (get-universal-time)))))
         (log-message :error "Message is malfomed"))))
 
-(defun handle-handshake (scanner message-handler)
+(defun socket.io-session ()
   (let* ((session-id (uuid:make-v4-uuid))
          (timeout *close-timeout*)
-         (heartbeat (timeout-heartbeat timeout))
-         (session (list session-id :heartbeat-timeout heartbeat :close-timeout timeout :message-id 0)))
+         (heartbeat (timeout-heartbeat timeout)))
+    (list session-id :heartbeat-timeout heartbeat :close-timeout timeout :message-id 0)))
+
+(defun socket.io-dispatcher (session scanner message-handler)
+  #'(lambda (request) ; dispatcher
+      (and (scan scanner (script-name request))
+           (uuid-equal-p (uuid:make-uuid-from-string (cadr (path-info* request)))
+                         (car session))
+           #'(lambda (stream mutex) ; handshake handler
+               (send-connect)
+               (setf (getf-session session :stream) stream
+                     (getf-session session :mutex) mutex)
+               #'(lambda (message) ; message handler
+                   (let ((*session* session))
+                     (handle-message message message-handler)))))))
+
+(defun handle-handshake (scanner message-handler)
+  (let* ((session (socket.io-session))
+         (dispatcher (socket.io-dispatcher session scanner message-handler)))
+    (setf (getf-session session :dispatcher) dispatcher)
     (push session *sessions*)
-    (push #'(lambda (request) ; dispatcher
-              (and (scan scanner (script-name request))
-                   (uuid-equal-p (uuid:make-uuid-from-string (cadr (path-info* request)))
-                                 session-id)
-                   #'(lambda (stream mutex) ; handshake handler
-                       (send-connect)
-                       (setf (getf (cdr session) :stream) stream
-                             (getf (cdr session) :mutex) mutex)
-                       #'(lambda (message) ; message handler
-                           (let ((*session* session))
-                             (handle-message message message-handler))))))
-          *websocket-handlers*)
-    (format nil "~a:~d:~d:~{~a~^,~}" session-id heartbeat timeout (list "websocket"))))
+    (push dispatcher *websocket-handlers*)
+    (format nil "~a:~d:~d:~{~a~^,~}" (car session) (getf-session session :heartbeat-timeout) (getf-session session :close-timeout) (list "websocket"))))
 
 (defun handle-disconnect (reply session-id)
   (let* ((uuid (make-uuid-from-string session-id))
