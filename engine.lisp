@@ -142,7 +142,10 @@
                                             (list item item))
                                         (mapcar #'cadr (cdr *ps-lisp-library*))))))))
 
-(socket.io:define-socket.io-handler)
+(socket.io:define-socket.io-handler #'(lambda (message)
+                                        (declare (ignore message))
+                                        t ; TODO
+                                        ))
 
 (let ((swank:*use-dedicated-output-stream* nil)
       (swank:*communication-style*

@@ -48,6 +48,7 @@
 (defconstant +websocket-magic-key+ "258EAFA5-E914-47DA-95CA-C5AB0DC85B11") ; this is a fixed uuid v4 value by specification
 
 (defvar *websocket-stream*)
+(defvar *websocket-stream-mutex*)
 (defvar *websocket-socket*)
 
 (defparameter *websocket-handlers* nil)
@@ -116,16 +117,18 @@
     (websocket-unsupported-version ()
       (hunchentoot-error "WebSocket handshake failed because of unsupported protocol version"))))
 
-(defun websocket-send-term (stream)
-  (write-sequence +websocket-terminator+ stream)
-  (force-output stream))
-
-(defun websocket-send-message (message &optional (stream *websocket-stream*))
-  (when (> (length message) 0) ; empty message would send terminator
-    (write-byte #x00 stream)
-    (write-utf-8-bytes message stream)
-    (write-byte #xff stream)
+(defun websocket-send-term (&optional (stream *websocket-stream*) (mutex *websocket-stream-mutex*))
+  (with-lock-held (mutex)
+    (write-sequence +websocket-terminator+ stream)
     (force-output stream)))
+
+(defun websocket-send-message (message &optional (stream *websocket-stream*) (mutex *websocket-stream-mutex*))
+  (when (> (length message) 0) ; empty message would send terminator
+    (with-lock-held (mutex)
+      (write-byte #x00 stream)
+      (write-utf-8-bytes message stream)
+      (write-byte #xff stream)
+      (force-output stream))))
 
 (defun skip-bytes (stream number)
   (dotimes (num number)
@@ -139,8 +142,7 @@
                  (do ((reader (make-in-memory-output-stream))
                       (data (read-byte stream) (read-byte stream)))
                      ((= #xff data)
-                      (let ((*websocket-stream* stream))
-                        (funcall message-handler (utf-8-bytes-to-string (get-output-stream-sequence reader)))))
+                      (funcall message-handler (utf-8-bytes-to-string (get-output-stream-sequence reader))))
                    (write-byte data reader)))
                 ((= #xff type)
                  (let ((data (read-byte stream)))
@@ -150,12 +152,19 @@
                              (length (logand #x7f data) (+ (* 128 length) (logand #x7f data))))
                             ((= #x80 (logand #x80 data))
                              (skip-bytes stream length))))))
-                (t (error 'websocket-illegal-frame-type :type type))))))) ; irregular termination
+                (t (error 'websocket-illegal-frame-type ; irregular termination
+                          :type type))))))) 
 
 (defmethod process-connection :around ((*acceptor* websocket-acceptor) (socket t))
   (let ((*websocket-socket* socket)
         (hunchentoot-asd:*hunchentoot-version* (format nil "~a cl-websocket 0" hunchentoot-asd:*hunchentoot-version*)))
     (call-next-method)))
+
+(defmethod process-connection ((*acceptor* websocket-acceptor) (socket t))
+  (handler-case
+      (call-next-method)
+    (error (condition)
+      (log-message :error "WebSocket connection terminated unexpectedly: ~a" condition))))
 
 (defmethod process-request :around ((request websocket-request))
   "I *do* know what I'm doing, Mister!"
@@ -168,8 +177,10 @@
           (let ((timeout (websocket-timeout (request-acceptor request))))
             (set-timeouts *websocket-socket* timeout timeout))
           (handler-case
-              (websocket-process-connection stream
-                                            (funcall (websocket-request-handler request) stream)) ; custom handshake
+              (let ((*websocket-stream* stream)
+                    (*websocket-stream-mutex* (make-lock)))
+                (websocket-process-connection stream
+                                              (funcall (websocket-request-handler request) stream *websocket-stream-mutex*))) ; custom handshake
             (end-of-file ()
               (log-message :debug "WebSocket connection terminated"))
             (websocket-illegal-frame-type (condition)

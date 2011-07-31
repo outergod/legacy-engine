@@ -29,7 +29,7 @@
                              ; websocket
                              :alexandria :ironclad :flexi-streams :chunga :trivial-utf-8 :bordeaux-threads
                              ; socket.io
-                             :uuid)
+                             :uuid :json :cl-heredoc)
                 :components
                 ((:module "server"
                           :serial t

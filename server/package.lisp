@@ -23,8 +23,8 @@
   (:use :cl :hunchentoot :cl-ppcre :alexandria :flexi-streams :trivial-utf-8 :bordeaux-threads)
   (:import-from :ironclad :digest-stream)
   (:export :websocket-acceptor :websocket-handle-handshake :websocket-send-message :websocket-send-term
-           :*websocket-handlers* :default-websocket-handler))
+           :*websocket-handlers* :default-websocket-handler :*websocket-stream* :*websocket-stream-mutex*))
 
 (defpackage :socket.io
-  (:use :cl :hunchentoot :cl-ppcre :uuid :websocket)
+  (:use :cl :hunchentoot :cl-ppcre :uuid :websocket :bordeaux-threads :json)
   (:export :define-socket.io-handler))
