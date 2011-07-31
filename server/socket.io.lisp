@@ -28,9 +28,9 @@
          (uuid:uuid-to-byte-array uuid-1)
          (uuid:uuid-to-byte-array uuid-2)))
 
-(defun delete-session (uuid)
-  (log-message :debug "Going to delete session ~a" uuid)
-  (setq *sessions* (delete uuid *sessions* :test #'eq :key #'car)))
+(defun delete-session (session)
+  (log-message :debug "Going to delete session ~a" (car session))
+  (setq *sessions* (delete session *sessions* :test #'eq)))
 
 (defun uuid-session (uuid)
   (assoc uuid *sessions* :test #'uuid-equal-p))
@@ -66,7 +66,7 @@
 
 (defun terminate (session)
   (let ((stream (getf-session session :stream)))
-    (delete-session (car session))
+    (delete-session session)
     (when (and (streamp stream) (open-stream-p stream))
       (send-disconnect)
       (websocket-send-term)
@@ -140,8 +140,8 @@
           (declare (ignore id handle-id endpoint data)) ; TODO
           (ecase (translate-message-type type)
             (:disconnect
-             (log-message :debug "Client signalled termination"))
-             (delete-session (car *session*)))
+             (log-message :debug "Client signalled termination")
+             (delete-session *session*))
             (:connect ; connect TODO
              (log-message :info "Client tried to connect to additional endpoint"))
             (:heartbeat
@@ -171,9 +171,9 @@
 
 (defun handle-disconnect (reply session-id)
   (let* ((uuid (make-uuid-from-string session-id))
-         (uuid-session (car (assoc uuid *sessions* :test #'uuid-equal-p))))
+         (session (uuid-session uuid)))
     (if uuid-session
-        (delete-session uuid-session)
+        (delete-session session)
         (setf (return-code reply) +http-internal-server-error+))))
 
 (defun path-info* (&optional (request *request*))
