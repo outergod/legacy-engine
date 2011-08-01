@@ -18,6 +18,7 @@
 
 (set-dispatch-macro-character #\# #\> #'cl-heredoc:read-heredoc)
 
+; FIXME (maybe) use hunchtoot session management?
 (defparameter *sessions* (list))
 (defparameter *close-timeout* 25)
 (defparameter *heartbeat-interval* 20)
@@ -64,6 +65,10 @@
            (if (consp message)
                (list 4 message-id (encode-json message))
                (list 3 message-id message)))))
+
+(defun send-ack (id &optional data)
+  (declare (ignore data)) ; TODO
+  (websocket-send-message (format nil "6:::~d" id)))
 
 (defun terminate (session)
   (let ((stream (getf-session session :stream)))
@@ -130,15 +135,15 @@
     (8 :noop)))
 
 (defun handle-message (message message-handler)
-  (declare (ignore message-handler)) ; TODO
-  (log-message :debug "Received socket.io message ~s~%" message)
   (multiple-value-bind (match matches)
       ; [message type] ':' [message id ('+')] ':' [message endpoint] (':' [message data])
       (scan-to-strings #>eof>^(\d):(\d+)?(\+)?:([^:]+)?(?::(.+))?eof message)
     (if match
-        (destructuring-bind (type id handle-id endpoint data)
+        (destructuring-bind (type id data-ack endpoint data)
             (coerce matches 'list)
-          (declare (ignore id handle-id endpoint data)) ; TODO
+          (declare (ignore endpoint)) ; TODO
+          (when (and data-ack (not (eq :event type)))
+            (log-message :warning "Data acknowledgement requested without event"))
           (ecase (translate-message-type type)
             (:disconnect
              (log-message :debug "Client signalled termination")
@@ -147,8 +152,21 @@
              (log-message :info "Client tried to connect to additional endpoint"))
             (:heartbeat
              (log-message :debug "Client sent heartbeat")
-             (setf (getf-session *session* :receive-timestamp) (get-universal-time)))))
-        (log-message :error "Message is malfomed"))))
+             (setf (getf-session *session* :receive-timestamp) (get-universal-time)))
+            (:message
+             (log-message :debug "Client sent message ~s" data)
+             (funcall message-handler data))
+            (:json-message
+             (log-message :debug "Client sent JSON message ~s" data)
+             (funcall message-handler (decode-json-from-string data)))
+            (:event
+             (log-message :debug "Client sent event message ~s" data)
+             ; TODO
+             ; TODO data-ack ? see socket.io/namespace
+             ))
+          (when id ; TODO data-ack
+            (send-ack id)))
+        (log-message :error "Message is malfomed: ~s" message))))
 
 (defun socket.io-session ()
   (let* ((session-id (uuid:make-v4-uuid))
