@@ -30,7 +30,7 @@
                              :alexandria :ironclad :flexi-streams :chunga :trivial-utf-8 :bordeaux-threads
                              :trivial-backtrace
                              ; socket.io
-                             :uuid :json :cl-heredoc)
+                             :uuid :cl-json :cl-heredoc)
                 :components
                 ((:module "server"
                           :serial t

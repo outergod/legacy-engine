@@ -19,6 +19,8 @@
 
 (in-package :engine-system)
 
+(set-dispatch-macro-character #\# #\> #'cl-heredoc:read-heredoc)
+
 (defpackage :websocket
   (:use :cl :hunchentoot :cl-ppcre :alexandria :flexi-streams :trivial-utf-8 :bordeaux-threads)
   (:import-from :ironclad :digest-stream)

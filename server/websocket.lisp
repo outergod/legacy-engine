@@ -16,8 +16,12 @@
 
 (in-package :websocket)
 
-(defconstant +websocket-terminator+ '(#x00 #xff))
-(defconstant +websocket-magic-key+ "258EAFA5-E914-47DA-95CA-C5AB0DC85B11") ; this is a fixed uuid v4 value by specification
+(unless (boundp '+websocket-terminator+)
+  (defconstant +websocket-terminator+ '(#x00 #xff)))
+(unless (boundp '+websocket-terminator+)
+   ; this is a fixed uuid v4 value by specification
+  (defconstant +websocket-magic-key+ "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+
 
 (defvar *websocket-stream*)
 (defvar *websocket-stream-mutex*)

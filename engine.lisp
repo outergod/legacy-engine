@@ -19,7 +19,8 @@
 
 (defpackage engine
   (:use :cl :hunchentoot :osicat :osicat-sys :cl-who :parenscript :websocket)
-  (:import-from :css-lite :css))
+  (:import-from :css-lite :css)
+  (:import-from :osicat-posix :exit))
 
 (in-package :engine)
 
@@ -157,4 +158,4 @@
 (format t "~&Ready.~%Press return to stop~%")
 (read-line)
 (stop *acceptor*)
-(osicat-posix:exit 0)
+(exit 0)

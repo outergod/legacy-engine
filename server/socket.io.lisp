@@ -16,8 +16,6 @@
 
 (in-package :socket.io)
 
-(set-dispatch-macro-character #\# #\> #'cl-heredoc:read-heredoc)
-
 ; FIXME (maybe) use hunchtoot session management?
 (defparameter *sessions* (list))
 (defparameter *close-timeout* 25)
@@ -81,29 +79,27 @@
 (defun heartbeat ()
   (log-message :debug "Bubump")
   (mapc #'(lambda (session)
-            (destructuring-bind (session-id &key stream mutex heartbeat-timeout
+            (destructuring-bind (session-id &key stream mutex heartbeat-timeout open
                                             (send-timestamp 0) (receive-timestamp heartbeat-timeout) &allow-other-keys)
                 session
               (let ((*websocket-stream* stream)
                     (*websocket-stream-mutex* mutex)
-                    (open (and (streamp stream) (open-stream-p stream))))
-                (if (or (not open)
-                        (> send-timestamp
-                           (+ heartbeat-timeout receive-timestamp)))
-                    (progn
-                      (log-message :debug "Heartbeat timeout for ~a: ~:[not ~;~]open / ~d > ~d"
-                                   session-id open send-timestamp (+ heartbeat-timeout receive-timestamp))
-                      (terminate session))
-                    (progn
-                      (log-message :debug "Sending heartbeat to ~a" session-id)
-                      (send-heartbeat)
-                      (setf (getf-uuid-session session-id :send-timestamp) (get-universal-time)))))))
+                    (stream-open-p (and (streamp stream) (open-stream-p stream))))
+                (cond ((not open) nil)
+                      ((or (not stream-open-p)
+                           (> send-timestamp
+                              (+ heartbeat-timeout receive-timestamp)))
+                       (log-message :debug "Heartbeat timeout for ~a: ~:[not ~;~]open / ~d > ~d"
+                                    session-id stream-open-p send-timestamp (+ heartbeat-timeout receive-timestamp))
+                       (terminate session))
+                      (t (log-message :debug "Sending heartbeat to ~a" session-id)
+                         (send-heartbeat)
+                         (setf (getf-uuid-session session-id :send-timestamp) (get-universal-time)))))))
         *sessions*))
 
 ; (sb-ext:list-all-timers)
-(sb-ext:unschedule-timer *heartbeat-timer*)
+; (sb-ext:unschedule-timer *heartbeat-timer*)
 (defparameter *heartbeat-timer* (sb-ext:make-timer #'heartbeat :name "session.io-heartbeat" :thread t))
-(sb-ext:schedule-timer *heartbeat-timer* 0 :repeat-interval *heartbeat-interval* :absolute-p nil)
 
 (defun log-request (request)
   (let ((pathinfo (cdddr (split "/" (script-name request)))))
@@ -182,7 +178,8 @@
            #'(lambda (stream mutex) ; handshake handler
                (send-connect)
                (setf (getf-session session :stream) stream
-                     (getf-session session :mutex) mutex)
+                     (getf-session session :mutex) mutex
+                     (getf-session session :open) t)
                #'(lambda (message) ; message handler
                    (let ((*session* session))
                      (handle-message message message-handler)))))))
@@ -198,7 +195,7 @@
 (defun handle-disconnect (reply session-id)
   (let* ((uuid (make-uuid-from-string session-id))
          (session (uuid-session uuid)))
-    (if uuid-session
+    (if session
         (delete-session session)
         (setf (return-code reply) +http-internal-server-error+))))
 
@@ -206,6 +203,8 @@
   (cdddr (split "/" (script-name* request))))
 
 (defun handle-socket.io-request (pathinfo scanner message-handler)
+  (unless (find *heartbeat-timer* (sb-ext:list-all-timers) :test #'eq)
+    (sb-ext:schedule-timer *heartbeat-timer* 0 :repeat-interval *heartbeat-interval* :absolute-p nil))
   (setf (content-type*) "text/plain")
   (if pathinfo
       ; v1 spec [scheme] '://' [host] '/' [namespace] '/' [protocol version] '/' [transport id] '/' [session id] '/' ( '?' [query] )
