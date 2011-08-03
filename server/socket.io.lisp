@@ -64,9 +64,11 @@
                (list 4 message-id (encode-json message))
                (list 3 message-id message)))))
 
-(defun send-ack (id &optional data)
-  (declare (ignore data)) ; TODO
-  (websocket-send-message (format nil "6:::~d" id)))
+(defun send-ack (id &rest data)
+  (websocket-send-message (apply #'concatenate 'string "6:::" id (if data (list "+" (encode-json-to-string data)) (list "")))))
+
+(defun send-error (message &optional advice)
+  (websocket-send-message (apply #'concatenate 'string "7:::" message (if advice (list "+" advice) (list "")))))
 
 (defun terminate (session)
   (let ((stream (getf-session session :stream)))
@@ -130,39 +132,57 @@
     (7 :error)
     (8 :noop)))
 
-(defun handle-message (message message-handler)
-  (multiple-value-bind (match matches)
-      ; [message type] ':' [message id ('+')] ':' [message endpoint] (':' [message data])
-      (scan-to-strings #>eof>^(\d):(\d+)?(\+)?:([^:]+)?(?::(.+))?eof message)
-    (if match
-        (destructuring-bind (type id data-ack endpoint data)
-            (coerce matches 'list)
-          (declare (ignore endpoint)) ; TODO
-          (when (and data-ack (not (eq :event type)))
-            (log-message :warning "Data acknowledgement requested without event"))
-          (ecase (translate-message-type type)
-            (:disconnect
-             (log-message :debug "Client signalled termination")
-             (delete-session *session*))
-            (:connect ; connect TODO
-             (log-message :info "Client tried to connect to additional endpoint"))
-            (:heartbeat
-             (log-message :debug "Client sent heartbeat")
-             (setf (getf-session *session* :receive-timestamp) (get-universal-time)))
-            (:message
-             (log-message :debug "Client sent message ~s" data)
-             (funcall message-handler data))
-            (:json-message
-             (log-message :debug "Client sent JSON message ~s" data)
-             (funcall message-handler (decode-json-from-string data)))
-            (:event
-             (log-message :debug "Client sent event message ~s" data)
-             ; TODO
-             ; TODO data-ack ? see socket.io/namespace
-             ))
-          (when id ; TODO data-ack
-            (send-ack id)))
-        (log-message :error "Message is malfomed: ~s" message))))
+(defun handle-ack (id data data-ack-p)
+  (cond ((and data-ack-p (not id))
+         (log-message :warning "Data acknowledgement requested without id, ignoring"))
+        (data-ack-p (send-ack id (encode-json-to-string data)))
+        (id (send-ack id))))
+
+; [message type] ':' [message id ('+')] ':' [message endpoint] (':' [message data])
+(let ((message-scanner (create-scanner #>eof>^(\d):(\d+)?(\+)?:([^:]+)?(?::(.+))?eof))
+      (message-splitter (create-scanner #>eof>^([^\+]*)(?:\+?(.*))eof)))
+  (defun handle-message-frame (message message-handler)
+    (multiple-value-bind (match matches)
+        (scan-to-strings message-scanner message)
+      (if match
+          (destructuring-bind (type id data-ack endpoint data)
+              (coerce matches 'list)
+            (declare (ignore endpoint)) ; TODO
+            (ecase (translate-message-type type)
+              (:disconnect
+               (log-message :debug "Client signalled termination")
+               (delete-session *session*))
+              (:connect
+               (log-message :info "Client tried to connect to additional endpoint")
+               (send-error "Additional endpoints not supported" "Just don't try again, bitch!"))
+              (:heartbeat
+               (log-message :debug "Client sent heartbeat")
+               (setf (getf-session *session* :receive-timestamp) (get-universal-time)))
+              (:message
+               (log-message :debug "Client sent message ~s" data)
+               (handle-ack id (funcall message-handler data) data-ack))
+              (:json-message
+               (log-message :debug "Client sent JSON message ~s" data)
+               (handle-ack id (funcall message-handler (decode-json-from-string data)) data-ack))
+              (:event
+               (log-message :debug "Client sent event message ~s" data)
+               (handle-ack id (funcall message-handler (decode-json-from-string data) t) data-ack))
+              (:ack
+               (destructuring-bind (id data)
+                   (coerce (nth-value 1 (scan-to-strings message-splitter message)) 'list)
+                 (log-message :debug "Client acknowledged ~d~%Data: ~a" id data)
+                 (when (string/= "" data)
+                   (let ((data (decode-json-from-string data)))
+                     (declare (ignore data))
+                     ; TODO pass back data to caller
+                     ; TODO handle malformed json
+                     ))))
+              (:error
+               (destructuring-bind (reason advice)
+                   (coerce (nth-value 1 (scan-to-strings message-splitter message)) 'list)
+                 (log-message :error "Client signalled an error: ~a~%Advice: ~a" reason advice)))
+              (:noop (log-message :debug "Client sent noop (whatever)"))))
+          (log-message :error "Message is malfomed: ~s" message)))))
 
 (defun socket.io-session ()
   (let* ((session-id (uuid:make-v4-uuid))
@@ -182,7 +202,7 @@
                      (getf-session session :open) t)
                #'(lambda (message) ; message handler
                    (let ((*session* session))
-                     (handle-message message message-handler)))))))
+                     (handle-message-frame message message-handler)))))))
 
 (defun handle-handshake (scanner message-handler)
   (let* ((session (socket.io-session))

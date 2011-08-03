@@ -143,8 +143,8 @@
                                             (list item item))
                                         (mapcar #'cadr (cdr *ps-lisp-library*))))))))
 
-(socket.io:define-socket.io-handler #'(lambda (message)
-                                        (declare (ignore message))
+(socket.io:define-socket.io-handler #'(lambda (message &optional event-p)
+                                        (declare (ignore message event-p))
                                         t ; TODO
                                         ))
 
