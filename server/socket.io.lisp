@@ -59,10 +59,26 @@
 
 (defun send-message (message)
   (let ((message-id (incf (getf-session *session* :message-id))))
-    (apply #'websocket-send-message "~d:~d::~a"
-           (if (consp message)
-               (list 4 message-id (encode-json message))
-               (list 3 message-id message)))))
+    (websocket-send-message (apply #'format nil "~d:~d::~a"
+                                   (if (consp message)
+                                       (list 4 message-id (encode-json-to-string message))
+                                       (list 3 message-id message))))))
+
+(defun send-event (name lambda-list &optional callback)
+  (let* ((message-id (incf (getf-session *session* :message-id)))
+         (handler #'(lambda (&rest args)
+                      (prog1 (apply (or callback
+                                        #'(lambda (&rest args)
+                                            (log-message :debug "Default callback for message ~d called: ~a" message-id args)))
+                                    args)
+                        (setf (getf-session *session* :callbacks)
+                              (delete message-id (getf-session *session* :callbacks) :key #'car :test #'=))))))
+    (push (cons message-id handler)
+          (getf-session *session* :callbacks))
+    (websocket-send-message (apply #'format nil "5:~d~:[~;+~]::~a"
+                                   (list message-id callback
+                                         (encode-json-to-string (list (cons :name name)
+                                                                      (cons :args lambda-list))))))))
 
 (defun send-ack (id &rest data)
   (websocket-send-message (apply #'concatenate 'string "6:::" id (if data (list "+" (encode-json-to-string data)) (list "")))))
@@ -169,14 +185,11 @@
                (handle-ack id (funcall message-handler (decode-json-from-string data) t) data-ack))
               (:ack
                (destructuring-bind (id data)
-                   (coerce (nth-value 1 (scan-to-strings message-splitter message)) 'list)
+                   (coerce (nth-value 1 (scan-to-strings message-splitter data)) 'list)
                  (log-message :debug "Client acknowledged ~d~%Data: ~a" id data)
-                 (when (string/= "" data)
-                   (let ((data (decode-json-from-string data)))
-                     (declare (ignore data))
-                     ; TODO pass back data to caller
-                     ; TODO handle malformed json
-                     ))))
+                 (alexandria:when-let ((callback (cdr (assoc (parse-integer id :junk-allowed nil)
+                                                             (getf-session *session* :callbacks) :test #'=))))
+                   (apply callback (decode-json-from-string (or data "[]"))))))
               (:error
                (destructuring-bind (reason advice)
                    (coerce (nth-value 1 (scan-to-strings message-splitter message)) 'list)
@@ -231,7 +244,7 @@
       (destructuring-bind (transport-id session-id)
           pathinfo
         (declare (ignore transport-id)) ; support for websocket only
-        (cond ((assoc "disconnect" (get-parameters*) :test #'string=)
+        (cond ((assoc "disconnect" (get-parameters*) :test #'string=) ; FIXME more cases or remove cond
                (prog1 nil (handle-disconnect *reply* session-id)))))
       (handle-handshake scanner message-handler)))
 
