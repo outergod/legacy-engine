@@ -64,13 +64,10 @@
                                        (list 4 message-id (encode-json-to-string message))
                                        (list 3 message-id message))))))
 
-(defun send-event (name lambda-list &optional callback)
+(defun send-event (name lambda-list &optional (callback #'(lambda (&rest args) (declare (ignore args)))))
   (let* ((message-id (incf (getf-session *session* :message-id)))
          (handler #'(lambda (&rest args)
-                      (prog1 (apply (or callback
-                                        #'(lambda (&rest args)
-                                            (log-message :debug "Default callback for message ~d called: ~a" message-id args)))
-                                    args)
+                      (prog1 (apply callback args)
                         (setf (getf-session *session* :callbacks)
                               (delete message-id (getf-session *session* :callbacks) :key #'car :test #'=))))))
     (push (cons message-id handler)
