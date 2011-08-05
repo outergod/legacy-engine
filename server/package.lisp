@@ -28,5 +28,5 @@
            :*websocket-handlers* :default-websocket-handler :*websocket-stream* :*websocket-stream-mutex*))
 
 (defpackage :socket.io
-  (:use :cl :hunchentoot :cl-ppcre :uuid :websocket :bordeaux-threads :json)
-  (:export :define-socket.io-handler))
+  (:use :cl :hunchentoot :cl-ppcre :uuid :websocket :bordeaux-threads :json :alexandria)
+  (:export :define-socket.io-handler :define-socket.io-event-handler :socket.io-on))
