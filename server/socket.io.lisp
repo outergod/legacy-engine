@@ -20,6 +20,7 @@
 (defparameter *sessions* (list))
 (defparameter *close-timeout* 25)
 (defparameter *heartbeat-interval* 20)
+(defparameter *event-handlers* (list))
 
 ; should really be in the uuid package and use accessors
 (defun uuid-equal-p (uuid-1 uuid-2)
@@ -47,6 +48,14 @@
   (log-message :debug "Going to delete session ~a" (car session))
   (setq *sessions* (delete session *sessions* :test #'eq))
   (setq *websocket-handlers* (delete (getf-session session :dispatcher) *websocket-handlers* :test #'eq)))
+
+
+(defun event-handler (name)
+  (cdr (assoc name *event-handlers* :test #'string=)))
+
+(defun (setf event-handler) (val var)
+  (push (cons var val) *event-handlers*))
+
 
 (defun send-disconnect ()
   (websocket-send-message "0::"))
@@ -78,7 +87,9 @@
                                                                       (cons :args lambda-list))))))))
 
 (defun send-ack (id &rest data)
-  (websocket-send-message (apply #'concatenate 'string "6:::" id (if data (list "+" (encode-json-to-string data)) (list "")))))
+  (websocket-send-message (apply #'concatenate 'string "6:::" id (if data
+                                                                     (list "+" (encode-json-to-string data))
+                                                                     (list "")))))
 
 (defun send-error (message &optional advice)
   (websocket-send-message (apply #'concatenate 'string "7:::" message (if advice (list "+" advice) (list "")))))
@@ -148,7 +159,7 @@
 (defun handle-ack (id data data-ack-p)
   (cond ((and data-ack-p (not id))
          (log-message :warning "Data acknowledgement requested without id, ignoring"))
-        (data-ack-p (send-ack id (encode-json-to-string data)))
+        (data-ack-p (send-ack id data))
         (id (send-ack id))))
 
 ; [message type] ':' [message id ('+')] ':' [message endpoint] (':' [message data])
@@ -179,7 +190,13 @@
                (handle-ack id (funcall message-handler (decode-json-from-string data)) data-ack))
               (:event
                (log-message :debug "Client sent event message ~s" data)
-               (handle-ack id (funcall message-handler (decode-json-from-string data) t) data-ack))
+               (let* ((data (decode-json-from-string data))
+                      (event (cdr (assoc :name data :test #'eq)))
+                      (args (cdr (assoc :args data :test #'eq))))
+                 (handle-ack id (alexandria:if-let ((handler (event-handler event)))
+                                  (apply handler args)
+                                  nil)
+                             data-ack)))
               (:ack
                (destructuring-bind (id data)
                    (coerce (nth-value 1 (scan-to-strings message-splitter data)) 'list)
@@ -245,8 +262,17 @@
                (prog1 nil (handle-disconnect *reply* session-id)))))
       (handle-handshake scanner message-handler)))
 
+;;; exported
 (defmacro define-socket.io-handler (message-handler &key (name 'socket.io) (prefix "/socket.io"))
   `(let ((scanner (create-scanner (concatenate 'string "^" ,prefix "/1(/.*)?")))) ; v1
      (define-easy-handler (,name :uri #'(lambda (request)
                                           (scan scanner (script-name request)))) ()
        (handle-socket.io-request (path-info*) scanner ,message-handler))))
+
+(defun define-socket.io-event-handler (event handler)
+  (setf (event-handler event) handler))
+
+(defmacro socket.io-on (event args &body body)
+  `(define-socket.io-event-handler ,event
+       #'(lambda ,args
+           ,@body)))
