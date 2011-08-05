@@ -18,7 +18,7 @@
   (require :engine))
 
 (defpackage engine
-  (:use :cl :hunchentoot :osicat :osicat-sys :cl-who :parenscript :websocket)
+  (:use :cl :hunchentoot :osicat :osicat-sys :cl-who :parenscript :websocket :socket.io)
   (:import-from :css-lite :css)
   (:import-from :osicat-posix :exit))
 
@@ -143,10 +143,11 @@
                                             (list item item))
                                         (mapcar #'cadr (cdr *ps-lisp-library*))))))))
 
-(socket.io:define-socket.io-handler #'(lambda (message &optional event-p)
-                                        (declare (ignore message event-p))
-                                        t ; TODO
-                                        ))
+(define-socket.io-handler #'(lambda (message)
+                              (declare (ignore message))))
+
+(socket.io-on "test" (arg1 &optional arg2)
+  (prog1 "foo" (log-message :debug "got event test, args ~a and ~a" arg1 arg2)))
 
 (let ((swank:*use-dedicated-output-stream* nil)
       (swank:*communication-style*
