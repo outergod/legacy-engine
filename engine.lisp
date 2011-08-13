@@ -93,16 +93,18 @@
 (define-memoized-ps-handler (client/main :uri "/client/main.js") ()
   (require (list "ace/ace-uncompressed" "parenscript" "socket.io/socket.io")
            (lambda ()
-             (require (list "engine/commands/default_commands" "ace/theme-twilight")
-                      (lambda ()
+             (require (list "engine/keyboard" "engine/commands/default_commands" "ace/theme-twilight")
+                      (lambda (keyboard)
                         (let ((editor (chain ace (edit "editor"))))
+                          (setf (@ editor io) (chain io (connect)))
                           (chain editor (set-theme "ace/theme/twilight"))
+                          (chain editor (set-keyboard-handler (keyboard editor)))
                           (chain editor renderer (set-show-gutter false))
                           (chain editor renderer (set-show-print-margin false))))))))
 
 (define-memoized-ps-handler (client/engine/commands/default_commands :uri "/client/engine/commands/default_commands.js") ()
-  (define (list "pilot/canon" "parenscript")
-      (lambda (canon ps)
+  (define (list "pilot/canon" "pilot/lang" "parenscript")
+      (lambda (canon lang ps)
         (flet ((bind-key (key)
                  (create win key mac key sender "editor")))
           (macrolet ((add-command-args (name key &body body)
@@ -110,31 +112,12 @@
                                 exec (lambda (env args request)
                                        ,@body))))
             (chain ps (map (chain canon add-command)
-                           (list (add-command-args "forward-char" "Ctrl-f"
-                                                   (chain env editor (navigate-right 1)))
-                                 (add-command-args "forward-char" "Ctrl-b"
-                                                   (chain env editor (navigate-left 1)))
-                                 (add-command-args "forward-char" "Alt-f"
-                                                   (chain env editor selection (move-cursor-word-right)))
-                                 (add-command-args "forward-char" "Alt-b"
-                                                   (chain env editor selection (move-cursor-word-left)))
-                                 (add-command-args "move-beginning-of-line" "Ctrl-a"
-                                                   (chain env editor (move-cursor-to (chain env editor selection (get-selection-lead) row) 0)))
-                                 (add-command-args "move-end-of-line" "Ctrl-e"
-                                                   (chain env editor selection (move-cursor-line-end)))
-                                 (add-command-args "back-to-indentation" "Alt-m"
-                                                   (chain env editor selection (move-cursor-line-end))
-                                                   (chain env editor selection (move-cursor-line-start)))
-                                 (add-command-args "beginning-of-buffer" "Alt-Shift-," ; ouch, Alt-< doesn't work instead
-                                                   (chain env editor (navigate-file-start)))
-                                 (add-command-args "end-of-buffer" "Alt-Shift-." ; ditto for Alt->
-                                                   (chain env editor (navigate-file-end)))
-                                 (add-command-args "delete-char" "Ctrl-d"
-                                                   (chain env editor (remove-right)))
-                                 (add-command-args "kill-word" "Alt-d" ; TODO send to server
-                                                   (chain env editor (remove-word-right)))
-                                 (add-command-args "undo" "Alt-_" ; TODO send to server; FIXME; UndoManager?
-                                                   (chain env editor (undo)))))))))))
+                           (list (add-command-args "self-insert-command" nil
+                                                   (chain env editor (insert (@ args text))))
+                                 (add-command-args "move-to-position" nil
+                                                   (chain env editor (move-cursor-to (@ args row) (@ args column))))
+                                 (add-command-args "backward-delete" nil
+                                                   (chain env editor (remove-left)))))))))))
 
 (define-memoized-ps-handler (client/parenscript :uri "/client/parenscript.js") ()
   (define (lambda ()
@@ -143,11 +126,60 @@
                                             (list item item))
                                         (mapcar #'cadr (cdr *ps-lisp-library*))))))))
 
+(define-memoized-ps-handler (client/engine/keyboard :uri "/client/engine/keyboard.js") ()
+  (define (list "pilot/canon")
+      (lambda (canon)
+        (lambda (editor)
+          (create handle-keyboard (lambda (data hash-id text-or-key key-code)
+                                    (chain editor io (emit "keyboard" hash-id text-or-key key-code
+                                                           (lambda (response)
+                                                             (chain canon (exec (@ response command) (create editor editor) "editor" (@ response args))))))
+                                    (create command "noop")))))))
+
 (define-socket.io-handler #'(lambda (message)
                               (declare (ignore message))))
 
-(socket.io-on "test" (arg1 &optional arg2)
-  (prog1 "foo" (log-message :debug "got event test, args ~a and ~a" arg1 arg2)))
+(defun key-code-case (code)
+  (case code
+    (8 "backward-delete")
+    (t "noop")))
+
+(socket.io-on "keyboard" (hash-id key key-code)
+  (prog1 (multiple-value-bind (command args)
+             (cond ((and (zerop key-code)
+                         (not (zerop (char-code (schar key 0)))))
+                    (values "self-insert-command" (list (cons "text" key))))
+                   ((not (zerop key-code))
+                    (key-code-case key-code))
+                   (t "noop"))
+           (list (cons :command command) (cons :args args)))
+    (log-message :debug "got event keyboard args ~s ~s ~s" hash-id key key-code)))
+
+;; (add-command-args "forward-char" "Ctrl-f"
+;;                   (chain env editor (navigate-right 1)))
+;;                                  (add-command-args "backward-char" "Ctrl-b"
+;;                                                    (chain env editor (navigate-left 1)))
+;;                                  (add-command-args "forward-word" "Alt-f"
+;;                                                    (chain env editor selection (move-cursor-word-right)))
+;;                                  (add-command-args "backward-word" "Alt-b"
+;;                                                    (chain env editor selection (move-cursor-word-left)))
+;;                                  (add-command-args "move-beginning-of-line" "Ctrl-a"
+;;                                                    (chain env editor (move-cursor-to (chain env editor selection (get-selection-lead) row) 0)))
+;;                                  (add-command-args "move-end-of-line" "Ctrl-e"
+;;                                                    (chain env editor selection (move-cursor-line-end)))
+;;                                  (add-command-args "back-to-indentation" "Alt-m"
+;;                                                    (chain env editor selection (move-cursor-line-end))
+;;                                                    (chain env editor selection (move-cursor-line-start)))
+;;                                  (add-command-args "beginning-of-buffer" "Alt-Shift-," ; ouch, Alt-< doesn't work instead
+;;                                                    (chain env editor (navigate-file-start)))
+;;                                  (add-command-args "end-of-buffer" "Alt-Shift-." ; ditto for Alt->
+;;                                                    (chain env editor (navigate-file-end)))
+;;                                  (add-command-args "delete-char" "Ctrl-d"
+;;                                                    (chain env editor (remove-right)))
+;;                                  (add-command-args "kill-word" "Alt-d" ; TODO send to server
+;;                                                    (chain env editor (remove-word-right)))
+;;                                  (add-command-args "undo" "Alt-_" ; TODO send to server; FIXME; UndoManager?
+;;                                                    (chain env editor (undo)))
 
 (let ((swank:*use-dedicated-output-stream* nil)
       (swank:*communication-style*
