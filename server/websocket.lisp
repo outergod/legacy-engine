@@ -128,6 +128,7 @@
 
 (defun websocket-send-message (message &optional (stream *websocket-stream*) (mutex *websocket-stream-mutex*))
   (when (> (length message) 0) ; empty message would send terminator
+    (log-message :debug "Going to send websocket message ~a" message)
     (with-lock-held (mutex)
       (write-byte #x00 stream)
       (write-utf-8-bytes message stream)
