@@ -17,15 +17,10 @@
 (let ((asdf:*asdf-verbose*))
   (require :engine))
 
-(defpackage engine
-  (:use :cl :hunchentoot :osicat :osicat-sys :cl-who :parenscript :websocket :socket.io)
-  (:import-from :css-lite :css)
-  (:import-from :osicat-posix :exit))
-
 (in-package :engine)
 
-(defconstant +hunchentoot-port+ 8888)
-(defconstant +swank-port+ (1+ +hunchentoot-port+))
+(define-constant +hunchentoot-port+ 8888 :test #'=)
+(define-constant +swank-port+ (1+ +hunchentoot-port+) :test #'=)
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (unless (boundp '*cwd*)

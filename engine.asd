@@ -26,8 +26,9 @@
                 :author "Alexander Kahl <e-user@fsfe.org>"
                 :license "AGPLv3+"
                 :depends-on (:hunchentoot :osicat :swank :cl-who :css-lite :parenscript :cl-ppcre
+                             :bordeaux-threads :alexandria :closer-mop :flexichain
                              ; websocket
-                             :alexandria :ironclad :flexi-streams :chunga :trivial-utf-8 :bordeaux-threads
+                             :ironclad :flexi-streams :chunga :trivial-utf-8 
                              :trivial-backtrace
                              ; socket.io
                              :uuid :cl-json :cl-heredoc :alexandria)
@@ -37,4 +38,5 @@
                           :components
                           ((:file "package")
                            (:file "websocket")
-                           (:file "socket.io")))))
+                           (:file "socket.io")
+                           (:file "buffer")))))

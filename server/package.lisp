@@ -30,3 +30,15 @@
 (defpackage :socket.io
   (:use :cl :hunchentoot :cl-ppcre :uuid :websocket :bordeaux-threads :json :alexandria)
   (:export :define-socket.io-handler :define-socket.io-event-handler :socket.io-on))
+
+(defpackage engine
+  (:use :cl :hunchentoot :osicat :osicat-sys :cl-who :websocket :socket.io
+        :bordeaux-threads :parenscript)
+  (:import-from :css-lite :css)
+  (:import-from :osicat-posix :exit)
+  (:import-from :alexandria :required-argument :define-constant)
+;  (:shadowing-import-from :parenscript :chain :switch)
+;  (:use )
+  ;; (:shadowing-import-from :flexichain :rotate)
+  ;; (:use :flexichain)
+  )
