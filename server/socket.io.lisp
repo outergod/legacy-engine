@@ -86,7 +86,7 @@
                                          (encode-json-to-string (list (cons :name name)
                                                                       (cons :args lambda-list))))))))
 
-(defun send-ack (id &rest data)
+(defun send-ack (id data)
   (websocket-send-message (apply #'concatenate 'string "6:::" id (if data
                                                                      (list "+" (encode-json-to-string data))
                                                                      (list "")))))
@@ -183,18 +183,18 @@
                (log-message :debug "Client sent heartbeat")
                (setf (getf-session *session* :receive-timestamp) (get-universal-time)))
               (:message
-               (log-message :debug "Client sent message ~s" data)
-               (handle-ack id (funcall message-handler data) data-ack))
+               (log-message :debug "Client sent message ~a" data)
+               (handle-ack id (multiple-value-list (funcall message-handler data)) data-ack))
               (:json-message
-               (log-message :debug "Client sent JSON message ~s" data)
-               (handle-ack id (funcall message-handler (decode-json-from-string data)) data-ack))
+               (log-message :debug "Client sent JSON message ~a" data)
+               (handle-ack id (multiple-value-list (funcall message-handler (decode-json-from-string data))) data-ack))
               (:event
-               (log-message :debug "Client sent event message ~s" data)
+               (log-message :debug "Client sent event message ~a" data)
                (let* ((data (decode-json-from-string data))
                       (event (cdr (assoc :name data :test #'eq)))
                       (args (cdr (assoc :args data :test #'eq))))
                  (handle-ack id (alexandria:if-let ((handler (event-handler event)))
-                                  (apply handler args)
+                                  (multiple-value-list (apply handler args))
                                   nil)
                              data-ack)))
               (:ack
