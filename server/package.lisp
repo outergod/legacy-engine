@@ -14,8 +14,13 @@
 ;;;; You should have received a copy of the GNU General Public License
 ;;;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+; FIXME upstream
 (in-package :hunchentoot)
 (export (list 'content-stream 'set-timeouts 'acceptor-listen-socket))
+
+; FIXME upstream
+(in-package :flexichain)
+(export 'cursors)
 
 (in-package :engine-system)
 
@@ -24,7 +29,8 @@
 (defpackage :websocket
   (:use :cl :hunchentoot :cl-ppcre :alexandria :flexi-streams :trivial-utf-8 :bordeaux-threads)
   (:import-from :ironclad :digest-stream)
-  (:export :websocket-acceptor :websocket-handle-handshake :websocket-send-message :websocket-send-term
+  (:export :websocket-acceptor :websocket-ssl-acceptor
+           :websocket-handle-handshake :websocket-send-message :websocket-send-term
            :*websocket-handlers* :default-websocket-handler :*websocket-stream* :*websocket-stream-mutex*))
 
 (defpackage :socket.io

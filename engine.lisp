@@ -27,12 +27,6 @@
   (unless (boundp '*cwd*)
     (defparameter *cwd* (pathname-directory-pathname (compile-file-pathname "")))))
 
-(defparameter *acceptor* (make-instance 'websocket-acceptor :port +hunchentoot-port+))
-(start *acceptor*)
-
-(setq *prologue* "<!DOCTYPE html>" ; html5, bitch!
-      *default-content-type* "text/html; charset=utf-8")
-
 (defun in-project-path (&rest paths)
   (labels ((rec (acc rest)
              (if rest
@@ -42,6 +36,18 @@
                    (rec (merge-pathnames file acc) (cdr rest)))
                  acc)))
     (rec *cwd* paths)))
+
+; (defparameter *acceptor* (make-instance 'websocket-acceptor :port +hunchentoot-port+))
+(defparameter *acceptor*
+  (make-instance 'websocket-ssl-acceptor :port +hunchentoot-port+
+                 :ssl-certificate-file (in-project-path "cert" "engine_cert.pem")
+                 :ssl-privatekey-file (in-project-path "cert" "engine_key.pem")
+                 :ssl-privatekey-password "engine"))
+
+(start *acceptor*)
+
+(setq *prologue* "<!DOCTYPE html>" ; html5, bitch!
+      *default-content-type* "text/html; charset=utf-8")
 
 (setq *message-log-pathname* (in-project-path "log" "message.log")
       *access-log-pathname* (in-project-path "log" "access.log"))

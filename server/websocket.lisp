@@ -41,6 +41,8 @@
                       :initform 60))
   (:default-initargs :request-class 'websocket-request :reply-class 'websocket-reply))
 
+(defclass websocket-ssl-acceptor (websocket-acceptor ssl-acceptor) ())
+
 (define-condition websocket-unsupported-version (condition)
   ((version :initarg :version :reader websocket-unsupported-version-of
             :initform (required-argument :version))))

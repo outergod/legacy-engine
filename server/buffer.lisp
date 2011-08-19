@@ -16,7 +16,6 @@
 
 ; FIXME upstream
 (in-package :flexichain)
-(export 'cursors)
 
 (defmethod delete* :before ((chain standard-cursorchain) position)
   (with-slots (cursors) chain
