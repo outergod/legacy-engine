@@ -22,6 +22,8 @@
 (defparameter *heartbeat-interval* 20)
 (defparameter *event-handlers* (list))
 
+(defvar *socket.io-session*)
+
 ; should really be in the uuid package and use accessors
 (defun uuid-equal-p (uuid-1 uuid-2)
   (every #'=
@@ -67,20 +69,20 @@
   (websocket-send-message "2::"))
 
 (defun send-message (message)
-  (let ((message-id (incf (getf-session *session* :message-id))))
+  (let ((message-id (incf (getf-session *socket.io-session* :message-id))))
     (websocket-send-message (apply #'format nil "~d:~d::~a"
                                    (if (consp message)
                                        (list 4 message-id (encode-json-to-string message))
                                        (list 3 message-id message))))))
 
 (defun send-event (name lambda-list &optional (callback #'(lambda (&rest args) (declare (ignore args)))))
-  (let* ((message-id (incf (getf-session *session* :message-id)))
+  (let* ((message-id (incf (getf-session *socket.io-session* :message-id)))
          (handler #'(lambda (&rest args)
                       (prog1 (apply callback args)
-                        (setf (getf-session *session* :callbacks)
-                              (delete message-id (getf-session *session* :callbacks) :key #'car :test #'=))))))
+                        (setf (getf-session *socket.io-session* :callbacks)
+                              (delete message-id (getf-session *socket.io-session* :callbacks) :key #'car :test #'=))))))
     (push (cons message-id handler)
-          (getf-session *session* :callbacks))
+          (getf-session *socket.io-session* :callbacks))
     (websocket-send-message (apply #'format nil "5:~d~:[~;+~]::~a"
                                    (list message-id callback
                                          (encode-json-to-string (list (cons :name name)
@@ -175,13 +177,13 @@
             (ecase (translate-message-type type)
               (:disconnect
                (log-message :debug "Client signalled termination")
-               (delete-session *session*))
+               (delete-session *socket.io-session*))
               (:connect
                (log-message :info "Client tried to connect to additional endpoint")
                (send-error "Additional endpoints not supported" "Just don't try again, bitch!"))
               (:heartbeat
                (log-message :debug "Client sent heartbeat")
-               (setf (getf-session *session* :receive-timestamp) (get-universal-time)))
+               (setf (getf-session *socket.io-session* :receive-timestamp) (get-universal-time)))
               (:message
                (log-message :debug "Client sent message ~a" data)
                (handle-ack id (multiple-value-list (funcall message-handler data)) data-ack))
@@ -193,7 +195,7 @@
                (let* ((data (decode-json-from-string data))
                       (event (cdr (assoc :name data :test #'eq)))
                       (args (cdr (assoc :args data :test #'eq))))
-                 (handle-ack id (alexandria:if-let ((handler (event-handler event)))
+                 (handle-ack id (if-let ((handler (event-handler event)))
                                   (multiple-value-list (apply handler args))
                                   nil)
                              data-ack)))
@@ -201,8 +203,8 @@
                (destructuring-bind (id data)
                    (coerce (nth-value 1 (scan-to-strings message-splitter data)) 'list)
                  (log-message :debug "Client acknowledged ~d~%Data: ~a" id data)
-                 (alexandria:when-let ((callback (cdr (assoc (parse-integer id :junk-allowed nil)
-                                                             (getf-session *session* :callbacks) :test #'=))))
+                 (when-let ((callback (cdr (assoc (parse-integer id :junk-allowed nil)
+                                                  (getf-session *socket.io-session* :callbacks) :test #'=))))
                    (apply callback (decode-json-from-string (or data "[]"))))))
               (:error
                (destructuring-bind (reason advice)
@@ -228,7 +230,7 @@
                      (getf-session session :mutex) mutex
                      (getf-session session :open) t)
                #'(lambda (message) ; message handler
-                   (let ((*session* session))
+                   (let ((*socket.io-session* session))
                      (handle-message-frame message message-handler)))))))
 
 (defun handle-handshake (scanner message-handler)
@@ -237,6 +239,8 @@
     (setf (getf-session session :dispatcher) dispatcher)
     (push session *sessions*)
     (push dispatcher *websocket-handlers*)
+    (when-let ((handler (event-handler "connection")))
+      (funcall handler session)) ; You can listen for this using socket.io-on "connection"
     (format nil "~a:~d:~d:~{~a~^,~}" (car session) (getf-session session :heartbeat-timeout) (getf-session session :close-timeout) (list "websocket"))))
 
 (defun handle-disconnect (reply session-id)
