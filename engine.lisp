@@ -21,6 +21,7 @@
 
 (define-constant +hunchentoot-port+ 8888 :test #'=)
 (define-constant +swank-port+ (1+ +hunchentoot-port+) :test #'=)
+(define-constant +startup-buffer+ "*scratch*" :test #'string=)
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (unless (boundp '*cwd*)
@@ -55,6 +56,8 @@
                              'default-dispatcher))
 
 
+(create-buffer +startup-buffer+)
+
 (define-easy-handler (index :uri "/") ()
   (with-html-output-to-string (*standard-output* nil :prologue t :indent t)
     (:html :lang "en"
@@ -88,31 +91,47 @@
 (define-memoized-ps-handler (client/main :uri "/client/main.js") ()
   (require (list "ace/ace-uncompressed" "parenscript" "socket.io/socket.io")
            (lambda ()
-             (require (list "engine/keyboard" "engine/commands/default_commands" "ace/theme-twilight")
-                      (lambda (keyboard)
-                        (let ((editor (chain ace (edit "editor"))))
-                          (setf (@ editor io) (chain io (connect)))
+             (require (list "engine/keyboard" "ace/edit_session" "engine/commands/default_commands" "ace/theme-twilight")
+                      (lambda (keyboard edit)
+                        (let ((editor (chain ace (edit "editor")))
+                              (session (@ edit "EditSession")))
+                          (setf (@ editor io) (chain io (connect))
+                                (@ editor buffer-name) (lisp +startup-buffer+))
                           (chain editor (set-theme "ace/theme/twilight"))
                           (chain editor (set-keyboard-handler (keyboard editor)))
                           (chain editor renderer (set-show-gutter false))
-                          (chain editor renderer (set-show-print-margin false))))))))
+                          (chain editor renderer (set-show-print-margin false))
+                          (chain editor io (emit "load-buffer" (lisp +startup-buffer+)
+                                                 (lambda (contents position)
+                                                   (chain editor (set-session (new (session contents))))
+                                                   (chain editor (move-cursor-to (@ position row) (@ position column))))))))))))
 
 (define-memoized-ps-handler (client/engine/commands/default_commands :uri "/client/engine/commands/default_commands.js") ()
   (define (list "pilot/canon" "pilot/lang" "parenscript")
       (lambda (canon lang ps)
         (flet ((bind-key (key)
                  (create win key mac key sender "editor")))
-          (macrolet ((add-command-args (name key &body body)
-                       `(create name ,name bind-key (bind-key ,key)
+          (macrolet ((add-command-args (name &body body)
+                       `(create name ,name bind-key (bind-key nil)
                                 exec (lambda (env args request)
                                        ,@body))))
             (chain ps (map (chain canon add-command)
-                           (list (add-command-args "self-insert-command" nil
+                           (list (add-command-args "self-insert-command"
                                                    (chain env editor (insert (@ args text))))
-                                 (add-command-args "move-to-position" nil
+                                 (add-command-args "backward-char"
+                                                   (chain env editor (navigate-left 1)))
+                                 (add-command-args "forward-char"
+                                                   (chain env editor (navigate-right 1)))
+                                 (add-command-args "previous-line"
+                                                   (chain env editor selection (move-cursor-by -1 0)))
+                                 (add-command-args "next-line"
+                                                   (chain env editor selection (move-cursor-by 1 0)))
+                                 (add-command-args "move-to-position"
                                                    (chain env editor (move-cursor-to (@ args row) (@ args column))))
-                                 (add-command-args "backward-delete" nil
-                                                   (chain env editor (remove-left)))))))))))
+                                 (add-command-args "backward-delete-char"
+                                                   (chain env editor (remove-left)))
+                                 (add-command-args "delete-char"
+                                                   (chain env editor (remove-right)))))))))))
 
 (define-memoized-ps-handler (client/parenscript :uri "/client/parenscript.js") ()
   (define (lambda ()
@@ -126,7 +145,7 @@
       (lambda (canon)
         (lambda (editor)
           (create handle-keyboard (lambda (data hash-id text-or-key key-code)
-                                    (chain editor io (emit "keyboard" hash-id text-or-key key-code
+                                    (chain editor io (emit "keyboard" hash-id text-or-key key-code (@ editor buffer-name)
                                                            (lambda (response)
                                                              (chain canon (exec (@ response command) (create editor editor) "editor" (@ response args))))))
                                     (create command "noop")))))))
@@ -134,21 +153,80 @@
 (define-socket.io-handler #'(lambda (message)
                               (declare (ignore message))))
 
-(defun key-code-case (code)
+(defun synchronized-insert-sequence (cursor sequence)
+  (multiple-value-prog1 (values "self-insert-command" (list (cons "text" sequence)))
+    (insert-sequence cursor sequence)))
+
+(defmacro define-synchronized-operation (name args &body body)
+  `(defun ,name ,args
+     (handler-case
+         ,@body
+       (flexi-position-error ()
+         "noop"))))
+
+(define-synchronized-operation synchronized-delete< (cursor)
+  (prog1 "backward-delete-char"
+    (delete< cursor)))
+
+(define-synchronized-operation synchronized-delete> (cursor)
+  (prog1 "delete-char"
+    (delete> cursor)))
+
+(define-synchronized-operation synchronized-cursor-left (cursor)
+  (prog1 "backward-char"
+    (decf (cursor-pos cursor))))
+
+(define-synchronized-operation synchronized-cursor-right (cursor)
+  (prog1 "forward-char"
+    (incf (cursor-pos cursor))))
+
+(define-synchronized-operation synchronized-cursor-up (cursor)
+  (prog1 "previous-line"
+    (incf (cursor-pos cursor))))
+
+(define-synchronized-operation synchronized-cursor-down (cursor)
+  (prog1 "next-line"
+    (incf (cursor-pos cursor))))
+
+(defun key-code-case (code cursor)
   (case code
-    (8 "backward-delete")
+    (8 (synchronized-delete< cursor))       ; backspace
+    (37 (synchronized-cursor-left cursor))  ; cursor left
+    (38 (synchronized-cursor-up cursor))    ; cursor up
+    (39 (synchronized-cursor-right cursor)) ; cursor right
+    (40 (synchronized-cursor-down cursor))  ; cursor down
+    (64 (synchronized-delete> cursor))      ; delete
     (t "noop")))
 
-(socket.io-on "keyboard" (hash-id key key-code)
-  (prog1 (multiple-value-bind (command args)
-             (cond ((and (zerop key-code)
-                         (not (zerop (char-code (schar key 0)))))
-                    (values "self-insert-command" (list (cons "text" key))))
-                   ((not (zerop key-code))
-                    (key-code-case key-code))
-                   (t "noop"))
-           (list (cons :command command) (cons :args args)))
-    (log-message :debug "got event keyboard args ~s ~s ~s" hash-id key key-code)))
+(socket.io-on "connection" (session)
+  (setf (getf-session session :buffer-cursors) (list)))
+
+(defun session-buffer-cursor (session buffer)
+  (or (cdr (assoc buffer (getf-session session :buffer-cursors) :test #'eq))
+      (prog1-let cursor (create-buffer-cursor buffer)
+        (push (cons buffer cursor)
+              (getf-session session :buffer-cursors)))))
+
+(socket.io-on "keyboard" (hash-id key key-code buffer-name)
+  (let ((cursor (session-buffer-cursor *socket.io-session* (buffer-named buffer-name))))
+    (prog1 (multiple-value-bind (command args)
+               (cond ((and (zerop key-code)
+                           (not (zerop (char-code (schar key 0)))))
+                      (synchronized-insert-sequence cursor key))
+                     ((not (zerop key-code))
+                      (key-code-case key-code cursor))
+                     (t "noop"))
+             (list (cons :command command) (cons :args args)))
+      (log-message :debug "got event keyboard args ~s ~s ~s ~s" hash-id key key-code buffer-name))))
+
+(socket.io-on "load-buffer" (buffer-name)
+  (let* ((buffer (buffer-named buffer-name))
+         (cursor (session-buffer-cursor *socket.io-session* buffer)))
+    (multiple-value-bind (row column)
+        (cursor-2d-position cursor)
+      (values (buffer-string buffer) (list (cons :row row) (cons :column column))))))
+
+(create-buffer "*scratch*")
 
 ;; (add-command-args "forward-char" "Ctrl-f"
 ;;                   (chain env editor (navigate-right 1)))

@@ -17,7 +17,7 @@
 (in-package :socket.io)
 
 ; FIXME (maybe) use hunchtoot session management?
-(defparameter *sessions* (list))
+(defparameter *socket.io-sessions* (list))
 (defparameter *close-timeout* 25)
 (defparameter *heartbeat-interval* 20)
 (defparameter *event-handlers* (list))
@@ -31,7 +31,7 @@
          (uuid:uuid-to-byte-array uuid-2)))
 
 (defun uuid-session (uuid)
-  (assoc uuid *sessions* :test #'uuid-equal-p))
+  (assoc uuid *socket.io-sessions* :test #'uuid-equal-p))
 
 (defun getf-session (session indicator)
   (getf (cdr session) indicator))
@@ -48,7 +48,7 @@
 
 (defun delete-session (session)
   (log-message :debug "Going to delete session ~a" (car session))
-  (setq *sessions* (delete session *sessions* :test #'eq))
+  (setq *socket.io-sessions* (delete session *socket.io-sessions* :test #'eq))
   (setq *websocket-handlers* (delete (getf-session session :dispatcher) *websocket-handlers* :test #'eq)))
 
 
@@ -123,7 +123,7 @@
                       (t (log-message :debug "Sending heartbeat to ~a" session-id)
                          (send-heartbeat)
                          (setf (getf-uuid-session session-id :send-timestamp) (get-universal-time)))))))
-        *sessions*))
+        *socket.io-sessions*))
 
 ; (sb-ext:list-all-timers)
 ; (sb-ext:unschedule-timer *heartbeat-timer*)
@@ -237,7 +237,7 @@
   (let* ((session (socket.io-session))
          (dispatcher (socket.io-dispatcher session scanner message-handler)))
     (setf (getf-session session :dispatcher) dispatcher)
-    (push session *sessions*)
+    (push session *socket.io-sessions*)
     (push dispatcher *websocket-handlers*)
     (when-let ((handler (event-handler "connection")))
       (funcall handler session)) ; You can listen for this using socket.io-on "connection"

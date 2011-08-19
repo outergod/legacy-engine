@@ -29,16 +29,14 @@
 
 (defpackage :socket.io
   (:use :cl :hunchentoot :cl-ppcre :uuid :websocket :bordeaux-threads :json :alexandria)
-  (:export :define-socket.io-handler :define-socket.io-event-handler :socket.io-on))
+  (:export :define-socket.io-handler :define-socket.io-event-handler :socket.io-on
+           :getf-session :*socket.io-session*))
 
 (defpackage engine
   (:use :cl :hunchentoot :osicat :osicat-sys :cl-who :websocket :socket.io
-        :bordeaux-threads :parenscript)
+        :bordeaux-threads :flexichain :trivial-garbage)
   (:import-from :css-lite :css)
   (:import-from :osicat-posix :exit)
   (:import-from :alexandria :required-argument :define-constant)
-;  (:shadowing-import-from :parenscript :chain :switch)
-;  (:use )
-  ;; (:shadowing-import-from :flexichain :rotate)
-  ;; (:use :flexichain)
-  )
+  (:shadowing-import-from :parenscript :chain)
+  (:use :parenscript))

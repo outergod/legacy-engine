@@ -39,4 +39,5 @@
                           ((:file "package")
                            (:file "websocket")
                            (:file "socket.io")
-                           (:file "buffer")))))
+                           (:file "buffer")
+                           (:file "utilities")))))
