@@ -26,7 +26,7 @@
                 :author "Alexander Kahl <e-user@fsfe.org>"
                 :license "AGPLv3+"
                 :depends-on (:hunchentoot :osicat :swank :cl-who :css-lite :parenscript :cl-ppcre
-                             :bordeaux-threads :alexandria :closer-mop :flexichain
+                             :bordeaux-threads :alexandria :closer-mop :flexichain :trivial-garbage
                              ; websocket
                              :ironclad :flexi-streams :chunga :trivial-utf-8 
                              :trivial-backtrace
