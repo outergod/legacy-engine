@@ -88,7 +88,7 @@
                                          (encode-json-to-string (list (cons :name name)
                                                                       (cons :args lambda-list))))))))
 
-(defun send-ack (id data)
+(defun send-ack (id &optional data)
   (websocket-send-message (apply #'concatenate 'string "6:::" id (if data
                                                                      (list "+" (encode-json-to-string data))
                                                                      (list "")))))
