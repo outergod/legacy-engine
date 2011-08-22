@@ -202,7 +202,7 @@
     (38 (synchronized-cursor-up cursor))    ; cursor up
     (39 (synchronized-cursor-right cursor)) ; cursor right
     (40 (synchronized-cursor-down cursor))  ; cursor down
-    (64 (synchronized-delete> cursor))      ; delete
+    (46 (synchronized-delete> cursor))      ; delete
     (t "noop")))
 
 (socket.io-on "connection" (session)
