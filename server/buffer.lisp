@@ -45,16 +45,20 @@
                    (setf (cursor-pos cursor)
                          position)))))))
 
+
 (in-package :engine)
 
 (defclass buffer (standard-cursorchain)
   ((mutex :reader buffer-mutex-of
-          :initform (make-recursive-lock)))
+          :initform (make-recursive-lock))
+   (newlines :reader buffer-newlines-of
+             :initform (make-container 'sorted-dlist-container)))
   (:default-initargs :element-type 'character :fill-element #\Null))
 
 (defclass buffer-cursor (right-sticky-flexicursor)
-  ((line-position :accessor cursor-line-position-of
-                  :initform 0)))
+  ((virtual-column :accessor buffer-cursor-virtual-column-of
+                   :initform 0)))
+
 
 (defparameter *buffers* (list))
 
@@ -75,7 +79,11 @@
         *buffers*))
 
 (defmethod initialize-instance :after ((buffer buffer) &rest initargs &key &allow-other-keys)
-  (declare (ignore initargs)))
+  (declare (ignore initargs))
+  (with-accessors ((newlines buffer-newlines-of))
+      buffer
+; fake newlines at -1 and (initially) 0 are extremely helpful to prevent annoying IFs
+    (insert-list newlines (list -1 0))))
 
 
 (mapc #'(lambda (method)
@@ -109,31 +117,51 @@
   (with-recursive-lock-held ((buffer-mutex-of buffer))
     (call-next-method)))
 
-(defmethod insert* :before ((buffer buffer) position object)
-  (when (char= #\Newline object)
-    (with-slots (cursors)
-        buffer
-      (mapc #'(lambda (cursor-wp)
-                (let ((cursor (weak-pointer-value cursor-wp)))
-                  (with-accessors ((cursor-position cursor-pos)
-                                   (line-position cursor-line-position-of))
-                      cursor
-                    (when (<= position cursor-position)
-                      (incf line-position)))))
-            cursors))))
+(defgeneric cursor-next-newline-node (buffer-cursor &optional position)
+  (:method ((cursor buffer-cursor) &optional (position (cursor-pos cursor)))
+    (with-accessors ((buffer flexichain:chain))
+        cursor
+      (with-accessors ((newlines buffer-newlines-of))
+          buffer
+        (search-for-matching-node newlines #'(lambda (node)
+                                               (>= (element node) position)))))))
 
-(defmethod delete* :before ((buffer buffer) position)
-  (when (char= #\Newline (element* buffer position))
-    (with-slots (cursors)
-        buffer
-      (mapc #'(lambda (cursor-wp)
-                (let ((cursor (weak-pointer-value cursor-wp)))
-                  (with-accessors ((cursor-position cursor-pos)
-                                   (line-position cursor-line-position-of))
-                      cursor
-                    (when (<= position cursor-position)
-                      (decf line-position)))))
-            cursors))))
+(defun adjust-right-newlines (container position function)
+  (when-let ((node (search-for-matching-node container #'(lambda (node)
+                                                           (>= (element node) position)))))
+    (funcall function node)
+    (iterate-right-nodes container node function)))
+
+(defmethod insert* :around ((buffer buffer) position object)
+  (with-accessors ((newlines buffer-newlines-of))
+      buffer
+    (call-next-method) ; don't execute if error is signalled here
+    (adjust-right-newlines newlines position #'(lambda (node)
+                                                 (incf (element node))))
+    (when (char= #\Newline object)
+      (insert-item newlines position))))
+
+(defmethod delete* :around ((buffer buffer) position)
+  (with-accessors ((newlines buffer-newlines-of))
+      buffer
+    (let ((newline-p (char= #\Newline (element* buffer position))))
+      (call-next-method) ; don't execute if error is signalled here
+      (when newline-p
+        (delete-item newlines position))
+      (adjust-right-newlines newlines position #'(lambda (node)
+                                                   (decf (element node)))))))
+
+(defmethod insert :after ((cursor buffer-cursor) object)
+  (declare (ignore object))
+  (with-accessors ((column buffer-cursor-virtual-column-of))
+      cursor
+    (setq column (nth-value 1 (cursor-2d-position cursor)))))
+
+(defmethod delete< :after ((cursor buffer-cursor) &optional n)
+  (declare (ignore n))
+  (with-accessors ((column buffer-cursor-virtual-column-of))
+      cursor
+    (setq column (nth-value 1 (cursor-2d-position cursor)))))
 
 (defgeneric buffer-string (buffer)
   (:method ((buffer buffer))
@@ -141,15 +169,62 @@
      (loop for index from 0 below (nb-elements buffer) collect (element* buffer index))
      'string)))
 
+
+(defgeneric cursor-next-newline-node (buffer-cursor &optional position)
+  (:method ((cursor buffer-cursor) &optional (position (cursor-pos cursor)))
+    (with-accessors ((buffer flexichain:chain))
+        cursor
+      (with-accessors ((newlines buffer-newlines-of))
+          buffer
+        (search-for-matching-node newlines #'(lambda (node)
+                                               (>= (element node) position)))))))
+
+(defgeneric cursor-previous-newline-node (buffer-cursor &optional position)
+  (:method ((cursor buffer-cursor) &optional (position (cursor-pos cursor)))
+    (when-let ((node (cursor-next-newline-node cursor position)))
+      (previous-item node))))
+
 (defgeneric cursor-2d-position (buffer-cursor)
   (:method ((cursor buffer-cursor))
     (with-accessors ((position cursor-pos)
-                     (row cursor-line-position-of)
-                     (chain flexichain:chain))
+                     (buffer flexichain:chain))
         cursor
-      (values row
-              (do ((position position (1- position))
-                   (column 0 (1+ column)))
-                  ((or (<= position 0)
-                       (char= #\Newline (element* chain (1- position)))) ; FIXME use buffer-local line encoding
-                   column))))))
+      (with-accessors ((newlines buffer-newlines-of))
+          buffer
+        (let* ((node (cursor-previous-newline-node cursor))
+               (row (element-position newlines (element node)))
+               (row-position (1+ (element node))))
+          (values row (- position row-position)))))))
+
+(defgeneric update-virtual-column (buffer-cursor)
+  (:method ((cursor buffer-cursor))
+    (with-accessors ((column buffer-cursor-virtual-column-of))
+        cursor
+      (setq column (nth-value 1 (cursor-2d-position cursor))))))
+
+(defgeneric buffer-cursor-lineward (buffer-cursor delta)
+  (:method ((cursor buffer-cursor) delta)
+    (with-accessors ((position cursor-pos))
+        cursor
+      (incf position delta)))
+  (:method :after ((cursor buffer-cursor) delta)
+           (declare (ignore delta))
+           (update-virtual-column cursor)))
+
+(defgeneric buffer-cursor-columnward (buffer-cursor delta)
+  (:method ((cursor buffer-cursor) delta)
+    (with-accessors ((position cursor-pos)
+                     (buffer flexichain:chain)
+                     (column buffer-cursor-virtual-column-of))
+        cursor
+      (with-accessors ((newlines buffer-newlines-of))
+          buffer
+        (let ((row (+ delta
+                      (nth-value 0 (cursor-2d-position cursor))))
+              (size (- (cl-containers:size newlines) 2)))
+          (when (and (>= row 0) (<= row size))
+            (let ((row-position (1+ (nth-element newlines row))))
+              (setq position (+ row-position
+                                (min column
+                                     (- (nth-element newlines (1+ row))
+                                        row-position)))))))))))

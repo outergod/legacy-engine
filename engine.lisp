@@ -37,12 +37,12 @@
                  acc)))
     (rec *cwd* paths)))
 
-; (defparameter *acceptor* (make-instance 'websocket-acceptor :port +hunchentoot-port+))
-(defparameter *acceptor*
-  (make-instance 'websocket-ssl-acceptor :port +hunchentoot-port+
-                 :ssl-certificate-file (in-project-path "cert" "engine_cert.pem")
-                 :ssl-privatekey-file (in-project-path "cert" "engine_key.pem")
-                 :ssl-privatekey-password "engine"))
+(defparameter *acceptor* (make-instance 'websocket-acceptor :port +hunchentoot-port+))
+;; (defparameter *acceptor*
+;;   (make-instance 'websocket-ssl-acceptor :port +hunchentoot-port+
+;;                  :ssl-certificate-file (in-project-path "cert" "engine_cert.pem")
+;;                  :ssl-privatekey-file (in-project-path "cert" "engine_key.pem")
+;;                  :ssl-privatekey-password "engine"))
 
 (start *acceptor*)
 
@@ -128,10 +128,6 @@
                                                    (chain env editor (navigate-left 1)))
                                  (add-command-args "forward-char"
                                                    (chain env editor (navigate-right 1)))
-                                 (add-command-args "previous-line"
-                                                   (chain env editor selection (move-cursor-by -1 0)))
-                                 (add-command-args "next-line"
-                                                   (chain env editor selection (move-cursor-by 1 0)))
                                  (add-command-args "move-to-position"
                                                    (chain env editor (move-cursor-to (@ args row) (@ args column))))
                                  (add-command-args "backward-delete-char"
@@ -166,7 +162,7 @@
 (defmacro define-synchronized-operation (name args &body body)
   `(defun ,name ,args
      (handler-case
-         ,@body
+         (progn ,@body)
        (flexi-position-error ()
          "noop"))))
 
@@ -180,23 +176,28 @@
 
 (define-synchronized-operation synchronized-cursor-left (cursor)
   (prog1 "backward-char"
-    (decf (cursor-pos cursor))))
+    (buffer-cursor-lineward cursor -1)))
 
 (define-synchronized-operation synchronized-cursor-right (cursor)
   (prog1 "forward-char"
-    (incf (cursor-pos cursor))))
+    (buffer-cursor-lineward cursor 1)))
 
 (define-synchronized-operation synchronized-cursor-up (cursor)
-  (prog1 "previous-line"
-    (incf (cursor-pos cursor))))
+  (buffer-cursor-columnward cursor -1)
+  (multiple-value-bind (row column)
+      (cursor-2d-position cursor)
+    (values "move-to-position" (list (cons :row row) (cons :column column)))))
 
 (define-synchronized-operation synchronized-cursor-down (cursor)
-  (prog1 "next-line"
-    (incf (cursor-pos cursor))))
+  (buffer-cursor-columnward cursor 1)
+  (multiple-value-bind (row column)
+      (cursor-2d-position cursor)
+    (values "move-to-position" (list (cons :row row) (cons :column column)))))
 
 (defun key-code-case (code cursor)
   (case code
     (8 (synchronized-delete< cursor))       ; backspace
+    (13 (synchronized-insert-sequence cursor (string #\Newline))) ; return
     (37 (synchronized-cursor-left cursor))  ; cursor left
     (38 (synchronized-cursor-up cursor))    ; cursor up
     (39 (synchronized-cursor-right cursor)) ; cursor right
@@ -214,10 +215,11 @@
               (getf-session session :buffer-cursors)))))
 
 (socket.io-on "keyboard" (hash-id key key-code buffer-name)
-  (let ((cursor (session-buffer-cursor *socket.io-session* (buffer-named buffer-name))))
+  (let ((cursor (session-buffer-cursor *socket.io-session* (buffer-named buffer-name)))
+        (key (string-trim (list #\Null #\Newline #\Return) key)))
     (prog1 (multiple-value-bind (command args)
                (cond ((and (zerop key-code)
-                           (not (zerop (char-code (schar key 0)))))
+                           (not (zerop (length key))))
                       (synchronized-insert-sequence cursor key))
                      ((not (zerop key-code))
                       (key-code-case key-code cursor))

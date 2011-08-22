@@ -40,9 +40,10 @@
 
 (defpackage engine
   (:use :cl :hunchentoot :osicat :osicat-sys :cl-who :websocket :socket.io
-        :bordeaux-threads :flexichain :trivial-garbage)
+        :bordeaux-threads :cl-containers :trivial-garbage)
   (:import-from :css-lite :css)
   (:import-from :osicat-posix :exit)
-  (:import-from :alexandria :required-argument :define-constant)
-  (:shadowing-import-from :parenscript :chain)
-  (:use :parenscript))
+  (:import-from :alexandria :required-argument :define-constant :when-let :if-let)
+  (:shadowing-import-from :parenscript :chain :size)
+  (:shadowing-import-from :flexichain :insert-sequence)
+  (:use :parenscript :flexichain))
