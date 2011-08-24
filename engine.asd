@@ -25,20 +25,16 @@
                 :description "Engine next generation internet Emacs"
                 :author "Alexander Kahl <e-user@fsfe.org>"
                 :license "AGPLv3+"
-                :depends-on (:hunchentoot :osicat :swank :cl-who :css-lite :parenscript :cl-ppcre
-                             :bordeaux-threads :alexandria :closer-mop :flexichain :trivial-garbage 
-                             :cl-containers
-                             ; websocket
-                             :ironclad :flexi-streams :chunga :trivial-utf-8 
-                             :trivial-backtrace
+                :depends-on (:hunchentoot :osicat :swank :cl-who :css-lite :parenscript
+                             :cl-ppcre :bordeaux-threads :alexandria :closer-mop :flexichain
+                             :trivial-garbage :cl-containers
                              ; socket.io
-                             :uuid :cl-json :cl-heredoc :alexandria)
+                             :hunchensocket :uuid :cl-json :cl-heredoc :alexandria)
                 :components
                 ((:module "server"
                           :serial t
                           :components
                           ((:file "package")
-                           (:file "websocket")
                            (:file "socket.io")
                            (:file "buffer")
                            (:file "utilities")))))

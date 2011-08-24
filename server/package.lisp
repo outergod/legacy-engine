@@ -15,10 +15,6 @@
 ;;;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 ; FIXME upstream
-(in-package :hunchentoot)
-(export (list 'content-stream 'set-timeouts 'acceptor-listen-socket))
-
-; FIXME upstream
 (in-package :flexichain)
 (export 'cursors)
 
@@ -26,21 +22,14 @@
 
 (set-dispatch-macro-character #\# #\> #'cl-heredoc:read-heredoc)
 
-(defpackage :websocket
-  (:use :cl :hunchentoot :cl-ppcre :alexandria :flexi-streams :trivial-utf-8 :bordeaux-threads)
-  (:import-from :ironclad :digest-stream)
-  (:export :websocket-acceptor :websocket-ssl-acceptor
-           :websocket-handle-handshake :websocket-send-message :websocket-send-term
-           :*websocket-handlers* :default-websocket-handler :*websocket-stream* :*websocket-stream-mutex*))
-
 (defpackage :socket.io
-  (:use :cl :hunchentoot :cl-ppcre :uuid :websocket :bordeaux-threads :json :alexandria)
+  (:use :cl :hunchentoot :hunchensocket :cl-ppcre :uuid :bordeaux-threads :json :alexandria)
   (:export :define-socket.io-handler :define-socket.io-event-handler :socket.io-on
            :getf-session :*socket.io-session*))
 
 (defpackage engine
-  (:use :cl :hunchentoot :osicat :osicat-sys :cl-who :websocket :socket.io
-        :bordeaux-threads :cl-containers :trivial-garbage)
+  (:use :cl :hunchentoot :hunchensocket :osicat :osicat-sys :cl-who :socket.io :bordeaux-threads
+        :cl-containers :trivial-garbage)
   (:import-from :css-lite :css)
   (:import-from :osicat-posix :exit)
   (:import-from :alexandria :required-argument :define-constant :when-let :if-let)
